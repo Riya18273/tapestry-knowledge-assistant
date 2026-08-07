@@ -99,6 +99,36 @@ Legend: 🟢 should answer well · 🟡 partial (some in Confluence) · 🔴 sho
 
 ---
 
+## 12. Capability tests — diagrams, tables, macros
+
+### 12a. Diagrams / images  *(Step 4 renders the image inline + 🖼️ marker + source link)*
+- 🟢 (Engineer) **Show me the network architecture diagram.**
+- 🟢 (Engineer) Show the Human-in-the-Loop (HIL) workflow decision flow / diagram.
+- 🟢 (Engineer) Is there a diagram of the deployment zones? Describe and show it.
+- 🟢 (Engineer) Show any sequence or data-flow diagram for a workflow.
+- 🟡 (Sales) Show the release mailer / marketing visual for release 0.3.
+- 🔴 (Customer) Show me an internal architecture diagram. *(customer shouldn't get internal diagrams)*
+> Expect: a factual description of the diagram **plus the actual image rendered**, with an
+> "open in Confluence" link. Diagrams are found via Claude-vision captions, so phrase the ask
+> by *what the diagram shows* (architecture, flow, zones), not just "diagram".
+
+### 12b. Tables  *(page/PDF/DOCX tables are extracted row-wise as "cell | cell")*
+- 🟢 (PM) From the Release Notes, list the major features per release in a table.
+- 🟢 (PM) What columns/fields does the Release Scope template define?
+- 🟢 (Engineer) List the workflow blocks and what each does.
+- 🟡 (PM) From the roadmap, list the items planned per release.
+> Expect: values pulled from table rows. If a table lived only inside a macro, see 12c.
+
+### 12c. Macros / rendered body  *(KNOWN GAP — we read `body.storage`, so macros are stripped)*
+- 🔴 What does the attachments/children macro on the "Product Description Document" list?
+- 🔴 Show the embedded Jira issues table on the release page.
+- 🟡 What does the roadmap macro/table render in full?
+- 🟡 List everything shown by the page-tree / include macros.
+> Expect: **thin or missing** — this confirms the macro-content gap (improvement #1: switch to
+> `body.view`). Use these to verify the gap now; they should improve after that fix.
+
+---
+
 ### What to look for while testing
 1. **Grounded** — claims trace to real content; **refuses/《no info》** when not covered (don't accept invented facts).
 2. **Right version** — "latest/next" resolves to the newest (currently 1.0.1 / 0.3 depending on framing).
