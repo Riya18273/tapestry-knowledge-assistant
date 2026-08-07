@@ -16,6 +16,7 @@ import jira
 import ingest
 import personas
 import vectorstore
+import answer
 
 st.set_page_config(page_title="Tapestry Knowledge Assistant", layout="wide")
 
@@ -64,7 +65,7 @@ def chunks_now():
 # ---- sidebar ---------------------------------------------------------------
 st.sidebar.title("Tapestry KB")
 step = st.sidebar.radio("Step", ["1 · Connect & Explore", "2 · Ingest & Ask",
-                                 "3 · Embed & Search"])
+                                 "3 · Embed & Search", "4 · Ask (answer)"])
 st.sidebar.divider()
 st.sidebar.caption("Connection")
 st.sidebar.write(s["conf_base"])
@@ -187,7 +188,7 @@ elif step.startswith("2"):
 
 
 # ========================= STEP 3 ==========================================
-else:
+elif step.startswith("3"):
     st.title("Step 3 — Embed & Search (semantic)")
     st.caption("Now matching by **meaning** using a vector index (ChromaDB + local Ollama "
                "embeddings), not just keywords. This is still retrieval — Step 4 turns the top "
@@ -236,3 +237,43 @@ else:
                         st.markdown(f"[Open source ↗]({h['url']})")
         st.caption("Semantic retrieval (meaning-based). Step 4 will compose these into one "
                    "concise, cited answer for the persona.")
+
+
+# ========================= STEP 4 ==========================================
+else:
+    st.title("Step 4 — Ask (grounded answer)")
+    eng, detail = answer.engine_status()
+    if eng == "none":
+        st.warning("No answer engine enabled yet. " + detail, icon="⚙️")
+    else:
+        st.caption(f"One concise, source-grounded answer written for the selected persona. "
+                   f"Engine: **{eng}** ({detail}). Embeddings/retrieval are local & free.")
+
+    if not vectorstore.stats()["vectors"]:
+        st.info("Build the vector index first (Step 3).")
+        st.stop()
+
+    pc, qc = st.columns([1, 3])
+    plabels = personas.labels()
+    persona = pc.selectbox("Who's asking?", list(plabels), format_func=lambda k: plabels[k])
+    query = qc.text_input("Question", placeholder="e.g. What's the business value of the next release?")
+
+    if query:
+        if eng == "none":
+            st.error("Enable an engine to get a written answer: add `ANTHROPIC_API_KEY` to `.env`, "
+                     "or run `ollama pull llama3.2` for a free local model. "
+                     "(Meanwhile, Step 3 shows the retrieved sources.)")
+            st.stop()
+        with st.spinner("Composing a grounded answer…"):
+            res = answer.answer(query, persona)
+        st.markdown("### Answer")
+        st.write(res["answer"] or "_(no answer)_")
+        if res.get("sources"):
+            st.markdown("**Sources**")
+            for sdoc in res["sources"]:
+                line = f"- {sdoc['title']}  ·  `{type_label(sdoc['type'])}`"
+                if sdoc.get("url"):
+                    line += f"  ·  [open ↗]({sdoc['url']})"
+                st.markdown(line)
+        st.caption(f"Grounded in retrieved Confluence sources · engine {res.get('provider')} · "
+                   "persona-filtered.")
