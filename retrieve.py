@@ -25,7 +25,17 @@ def _pv(v):
     return tuple(int(x) for x in v.split("."))
 
 
+_SUMMARY = ("summari", "overview of", "walk me through", "tell me about the",
+            "describe the ", "what does the")
+_STOP = {"summarise", "summarize", "summary", "overview", "document", "the", "and",
+         "for", "what", "does", "describe", "tell", "give", "about", "walk", "through"}
+
+
 def hybrid(query, allowed=None, k=6, pool=20, rrf=60):
+    ql = (query or "").lower()
+    summarize = any(w in ql for w in _SUMMARY)   # "summarise the MRD" -> want many chunks of ONE doc
+    if summarize:
+        pool = max(pool, 30)
     dense = vectorstore.search(query, allowed=allowed, k=pool)
     lex = ingest.search(ingest.load_chunks(), query, allowed=allowed, k=pool)
 
@@ -55,6 +65,16 @@ def hybrid(query, allowed=None, k=6, pool=20, rrf=60):
         if max_ver and max_ver in cv:
             scores[cid] *= 1.5
 
+    # document-summary intent: boost chunks whose TITLE matches the query, and let
+    # a single document fill the results (so "summarise the MRD" gets the whole doc).
+    if summarize:
+        qterms = {w for w in re.findall(r"\w+", ql) if len(w) > 3} - _STOP
+        for cid in scores:
+            title = (meta[cid].get("title") or "").lower()
+            if qterms and any(w in title for w in qterms):
+                scores[cid] *= 2.5
+    per_doc_cap = k if summarize else 2
+
     out, seen, per_doc = [], set(), {}
     for cid in sorted(scores, key=lambda c: -scores[c]):
         h = meta[cid]
@@ -62,7 +82,7 @@ def hybrid(query, allowed=None, k=6, pool=20, rrf=60):
         if key in seen:                       # drop near-duplicate chunks
             continue
         doc = h.get("id") or ""
-        if per_doc.get(doc, 0) >= 2:          # at most 2 chunks per source doc -> diverse sources
+        if per_doc.get(doc, 0) >= per_doc_cap:
             continue
         seen.add(key)
         per_doc[doc] = per_doc.get(doc, 0) + 1

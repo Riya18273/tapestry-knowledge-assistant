@@ -267,7 +267,8 @@ else:
         with st.spinner("Composing a grounded answer…"):
             res = answer.answer(query, persona)
         st.markdown("### Answer")
-        st.write(res["answer"] or "_(no answer)_")
+        # escape $ so Streamlit doesn't treat "$15T … $400B" as LaTeX math
+        st.markdown((res["answer"] or "_(no answer)_").replace("$", "\\$"))
         if res.get("sources"):
             st.markdown("**Sources**")
             for sdoc in res["sources"]:

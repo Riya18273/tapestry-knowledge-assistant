@@ -25,7 +25,12 @@ _SYSTEM = (
     "mechanism.\n"
     "5) If the question is about the 'latest'/'next'/'current' release, name the specific version "
     "and its headline items. If multiple versions appear, prefer the newest.\n"
-    "6) Keep it tight (under ~140 words). End with a line 'Sources:' listing only the titles you used."
+    "6) Keep it tight (under ~140 words). End with a line 'Sources:' listing only the titles you used.\n"
+    "7) Tapestry releases are numbered 0.x and 1.x (e.g. 0.3, 1.0, 1.0.1). Version numbers like "
+    "5.x belong to a different product and may appear in template pages — do NOT present them as "
+    "Tapestry releases; ignore them.\n"
+    "8) Write monetary/large numbers in plain text (e.g. 'USD 400B', '15 trillion') — never use "
+    "the '$' symbol."
 )
 _SAFE_PUBLIC = ("CUSTOMER-SAFE: do not expose internal Jira IDs/keys, code, table/column/method "
                 "names, or internal person names; share only released, customer-appropriate information.")
