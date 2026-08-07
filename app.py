@@ -275,7 +275,7 @@ else:
         for sdoc in res.get("sources", []):
             ip = sdoc.get("image_path")
             if ip and _os.path.exists(ip) and shown < 3:
-                st.image(ip, caption=sdoc["title"], use_column_width=True)
+                st.image(ip, caption=sdoc["title"])   # no width kwarg — version-proof
                 shown += 1
         if res.get("sources"):
             st.markdown("**Sources**")
