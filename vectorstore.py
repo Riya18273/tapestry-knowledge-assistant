@@ -79,12 +79,13 @@ def search(query, allowed=None, k=6):
     where = {"type": {"$in": sorted(allowed)}} if allowed else None
     res = coll.query(query_embeddings=[embed.embed_one(query)], n_results=k,
                      where=where, include=["documents", "metadatas", "distances"])
+    ids = (res.get("ids") or [[]])[0]
     docs = (res.get("documents") or [[]])[0]
     metas = (res.get("metadatas") or [[]])[0]
     dists = (res.get("distances") or [[]])[0]
     out = []
-    for doc, m, dist in zip(docs, metas, dists):
-        out.append({"score": round(1.0 - float(dist), 3), "text": doc,
+    for cid, doc, m, dist in zip(ids, docs, metas, dists):
+        out.append({"chunk_id": cid, "score": round(1.0 - float(dist), 3), "text": doc,
                     "type": m.get("type"), "title": m.get("title"),
                     "url": m.get("url"), "id": m.get("doc_id")})
     return out

@@ -20,7 +20,12 @@ Built **incrementally, testable from a Streamlit UI at each step** (like the Rel
   - [ ] Jira ingest (issues/epics/stories/sprints/versions) — also maps custom Jira types
 - [x] **Step 3 — Embed & index** — ChromaDB vector index, local Ollama (`nomic-embed-text`)
       embeddings; semantic search with per-persona `type` filtering in the UI
-- [ ] Step 4 — Retrieve & answer (LLM composes one concise, cited, persona-tailored answer)
+- [x] **Step 4 — Retrieve & answer** — **hybrid retrieval** (dense + lexical, RRF) with
+      near-duplicate + per-document diversity and **version awareness** (latest/next);
+      composes one grounded, cited, persona-tailored answer via Claude (or local Ollama).
+      Customer-safe for public personas. Confluence answering validated at release-agent quality.
+- [ ] **Jira** — ingest issues/epics/stories/sprints/fix-versions (+ custom type mapping);
+      add embedding batching for the ~10k-chunk backfill
 
 Personas: see `personas.py`. Verification prompts: see `PROMPTS.md`.
 All Atlassian access is **read-only**; chunks/manifest are written locally under `data/` (gitignored).

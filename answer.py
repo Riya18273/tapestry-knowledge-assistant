@@ -11,18 +11,21 @@ import urllib.request
 
 import config
 import personas
-import vectorstore
+import retrieve
 
 _SYSTEM = (
     "You are the Tapestry Knowledge Assistant. Answer the user's question using ONLY the "
     "SOURCES provided. Hard rules:\n"
-    "1) GROUND every statement in the sources. If the answer is not in them, say you don't have "
-    "that information — never invent features, numbers, dates, or names.\n"
+    "1) GROUND every statement in the sources. If the answer is not in them, say so plainly — "
+    "never invent features, numbers, dates, or names.\n"
     "2) AUDIENCE: {label}. STYLE: {style}\n"
     "3) {safety}\n"
-    "4) Be concise: lead with the direct answer, then a few short bullets if useful "
-    "(aim for under ~120 words).\n"
-    "5) After the answer, add a line 'Sources:' listing the titles you actually used."
+    "4) STRUCTURE: open with a one-sentence direct answer, then 2-5 short bullets of specifics "
+    "(features and their value). For business audiences, lead with the outcome/benefit, not the "
+    "mechanism.\n"
+    "5) If the question is about the 'latest'/'next'/'current' release, name the specific version "
+    "and its headline items. If multiple versions appear, prefer the newest.\n"
+    "6) Keep it tight (under ~140 words). End with a line 'Sources:' listing only the titles you used."
 )
 _SAFE_PUBLIC = ("CUSTOMER-SAFE: do not expose internal Jira IDs/keys, code, table/column/method "
                 "names, or internal person names; share only released, customer-appropriate information.")
@@ -86,7 +89,7 @@ def _call_ollama(system, user, model):
 def answer(question, persona, k=6):
     """Retrieve (persona-filtered) + compose one grounded answer. Returns a dict."""
     allowed = personas.allowed_types(persona)
-    hits = vectorstore.search(question, allowed=allowed, k=k)
+    hits = retrieve.hybrid(question, allowed=allowed, k=k)
     if not hits:
         return {"answer": "I don't have information on that in the content available to this persona.",
                 "sources": [], "provider": "none"}
