@@ -3,6 +3,17 @@
 Allowlist: pdf, docx, pptx, txt, md, csv. Images/zip/scripts are skipped."""
 import io
 import re
+import logging
+import warnings
+
+# pdfminer/pdfplumber emit noisy INFO/WARNING lines on many PDFs
+# ("CropBox missing from /Page, defaulting to MediaBox", "Could not get FontBBox").
+# They don't affect extraction — quiet them so the console stays readable.
+for _n in ("pdfminer", "pdfminer.pdfpage", "pdfminer.pdffont",
+           "pdfminer.pdfinterp", "pdfplumber"):
+    logging.getLogger(_n).setLevel(logging.ERROR)
+warnings.filterwarnings("ignore", module="pdfminer")
+warnings.filterwarnings("ignore", module="pdfplumber")
 
 
 def _pdf(b):
@@ -52,10 +63,14 @@ _PUA = re.compile("[%s-%s]" % (chr(0xE000), chr(0xF8FF)))
 _CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")       # keep \n and \t
 
 
+_PAGE_FOOTER = re.compile(r"(?im)^\s*p\s*a\s*g\s*e\s*\|?\s*\d+\s*$")   # 'Page | 3' footers
+
+
 def _clean(t):
     t = t.replace("\r", "\n")
     t = _PUA.sub("", t)
     t = _CTRL.sub("", t)
+    t = _PAGE_FOOTER.sub("", t)
     t = re.sub(r"[ \t]+", " ", t)
     t = re.sub(r"\n[ \t]+", "\n", t)
     t = re.sub(r"\n{3,}", "\n\n", t)
