@@ -1,0 +1,8 @@
+# Tapestry KB — dependencies grow per build phase (kept lean to avoid resolver conflicts).
+# Step 1 (Connect & Explore) needs only Streamlit; the connectors use the Python stdlib.
+streamlit>=1.36,<1.40      # <1.40 avoids the long-path template bundle on Windows Store Python
+
+# Added in later phases:
+#   pdfplumber python-docx python-pptx   # attachment text extraction (Step 2)
+#   openai                               # Ollama-compatible embeddings (Step 3)
+#   lancedb                              # single persistent vector index (Step 3)

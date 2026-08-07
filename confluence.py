@@ -1,0 +1,95 @@
+# -*- coding: utf-8 -*-
+"""Confluence Cloud connector (read-only). Space overview + samples for the UI."""
+import urllib.parse
+from collections import Counter
+import atlassian
+import config
+
+
+def list_spaces():
+    base = config.settings()["conf_base"]
+    out, start = [], 0
+    while True:
+        d = atlassian.get(f"{base}/rest/api/space?limit=100&start={start}&type=global")
+        for s in d.get("results", []):
+            out.append((s.get("key"), s.get("name")))
+        if d.get("_links", {}).get("next"):
+            start += 100
+        else:
+            break
+    return out
+
+
+def space_name(space):
+    base = config.settings()["conf_base"]
+    d = atlassian.get(f"{base}/rest/api/space/{urllib.parse.quote(space)}", soft=True)
+    return (d or {}).get("name", space)
+
+
+def _cql(base, cql, expand=""):
+    """Page a CQL content search; None if the endpoint errors (some reject it)."""
+    exp = f"&expand={expand}" if expand else ""
+    url = f"{base}/rest/api/content/search?cql={urllib.parse.quote(cql)}&limit=100{exp}"
+    out = []
+    while url:
+        d = atlassian.get(url, soft=True)
+        if d is None:
+            return None
+        out.extend(d.get("results", []))
+        nxt = d.get("_links", {}).get("next")
+        b = d.get("_links", {}).get("base") or base
+        url = (b + nxt) if nxt else None
+    return out
+
+
+def space_overview(space, sample_n=10):
+    """Counts + a few sample page links for one space (read-only)."""
+    base = config.settings()["conf_base"]
+    q = urllib.parse.quote(space)
+
+    ids, sample, start = [], [], 0
+    while True:
+        d = atlassian.get(f"{base}/rest/api/content?spaceKey={q}&type=page"
+                          f"&status=current&limit=100&start={start}")
+        for p in d.get("results", []):
+            ids.append(p["id"])
+            if len(sample) < sample_n:
+                webui = (p.get("_links", {}) or {}).get("webui", "")
+                sample.append({"title": p.get("title", ""),
+                               "url": (base + webui) if webui else ""})
+        if d.get("_links", {}).get("next"):
+            start += 100
+        else:
+            break
+
+    by_ext = Counter()
+    total_bytes = [0]
+    att = 0
+    estimated = False
+
+    def tally(a):
+        size = (a.get("extensions", {}) or {}).get("fileSize", 0) or 0
+        total_bytes[0] += size
+        title = a.get("title", "")
+        ext = title.rsplit(".", 1)[-1].lower() if "." in title else "?"
+        by_ext[ext] += 1
+
+    res = _cql(base, f'space="{space}" and type=attachment', "extensions")
+    if res is not None:
+        for a in res:
+            att += 1; tally(a)
+    else:
+        estimated = True
+        probe = ids[:60]; s_att = 0
+        for pid in probe:
+            d = atlassian.get(f"{base}/rest/api/content/{pid}/child/attachment"
+                              f"?limit=100&expand=extensions", soft=True)
+            for a in (d or {}).get("results", []):
+                s_att += 1; tally(a)
+        if probe:
+            att = int(s_att * len(ids) / len(probe))
+
+    return {"space": space, "name": space_name(space), "pages": len(ids),
+            "attachments": att, "attachments_estimated": estimated,
+            "attachment_mb": total_bytes[0] / 1_048_576,
+            "by_ext": dict(by_ext.most_common(8)), "sample": sample}
