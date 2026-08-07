@@ -8,7 +8,8 @@ tells, standups) get `meeting-notes` so they never leak into external personas.
 # Confluence labels -> type (labels are the most reliable signal).
 _LABELS = {
     "release-note": "release-note", "releasenote": "release-note", "release-notes": "release-note",
-    "prd": "prd", "product-requirement": "prd", "product-requirements": "prd", "brd": "prd",
+    "prd": "prd", "product-requirement": "prd", "product-requirements": "prd",
+    "brd": "prd", "mrd": "prd", "requirement": "prd", "requirements": "prd",
     "pdd": "pdd", "product-design": "pdd", "product-description": "pdd", "solution-design": "pdd",
     "architecture": "architecture", "hld": "architecture", "lld": "architecture",
     "high-level-design": "architecture", "system-design": "architecture",
@@ -30,7 +31,8 @@ _TITLE_RULES = [
                        "daily scrum", "grooming", "refinement", "kick off", "kick-off",
                        "kickoff", "catch up", "catch-up", " demo", "walkthrough"]),
     ("release-note", ["release of", "release note", "release notes", "changelog", "what's new"]),
-    ("prd", ["product requirement", "prd", "business requirement", "brd"]),
+    ("prd", ["product requirement", "prd", "business requirement", "brd",
+             "market requirement", "mrd", "requirement document"]),
     ("pdd", ["product design", "product description", "pdd", "solution design"]),
     ("architecture", ["architecture", "high level design", "high-level design", "hld",
                       "low level design", "low-level design", "lld", "system design",
