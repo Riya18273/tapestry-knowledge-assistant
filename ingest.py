@@ -42,13 +42,47 @@ def _write_record(data_dir, rec, chunks):
               ensure_ascii=False, indent=1)
 
 
+def _manifest_path(data_dir):
+    return os.path.join(data_dir, "manifest.jsonl")
+
+
+def _load_manifest(data_dir):
+    p = _manifest_path(data_dir)
+    out = []
+    if os.path.exists(p):
+        for line in open(p, encoding="utf-8"):
+            try:
+                out.append(json.loads(line))
+            except Exception:
+                pass
+    return out
+
+
+def _clear_sources(data_dir, sources):
+    """Remove chunk files + manifest entries for the given sources only, so a
+    per-source re-ingest doesn't wipe the other source."""
+    keep = []
+    for r in _load_manifest(data_dir):
+        if r.get("source") in sources:
+            f = os.path.join(data_dir, "chunks", r.get("type", ""), f"{_safe(r.get('id'))}.json")
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+        else:
+            keep.append(r)
+    with open(_manifest_path(data_dir), "w", encoding="utf-8") as f:
+        for r in keep:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+
 def ingest(sources=("confluence", "jira"), spaces=None, jira_limit=None, progress=None):
-    """Rebuild the chunk store. Returns per-type document counts."""
+    """(Re)build the chunk store for the given sources only. Returns per-type counts."""
     s = config.settings()
     data_dir = s["data_dir"]
     os.makedirs(data_dir, exist_ok=True)
-    manifest = os.path.join(data_dir, "manifest.jsonl")
-    mf = open(manifest, "w", encoding="utf-8")           # fresh rebuild (incrementals: Step 3+)
+    _clear_sources(data_dir, set(sources))               # replace just these sources
+    mf = open(_manifest_path(data_dir), "a", encoding="utf-8")
     counts = Counter()
 
     def emit(rec):
@@ -122,18 +156,56 @@ def load_chunks(data_dir=None):
     return out
 
 
-def search(chunks, query, allowed=None, k=10):
-    """Simple lexical (keyword) preview search. Semantic retrieval arrives in Step 4."""
+_TYPE_HINTS = {
+    "prd": ["requirement", "requirements", "prd"],
+    "pdd": ["design document", "pdd"],
+    "architecture": ["architecture", "network", "component", "diagram", "design"],
+    "release-note": ["release note", "changelog", "what changed", "fixed"],
+    "release-scope": ["scope", "version", "planned", "roadmap", "fix version"],
+    "sprint-report": ["sprint", "velocity", "backlog"],
+    "bug": ["bug", "defect", "error"],
+    "qa-report": ["qa", "test", "coverage", "acceptance"],
+    "research": ["research", "study", "paper", "findings"],
+    "story": ["story", "user story", "feature"],
+    "epic": ["epic"],
+}
+
+
+def _intent_types(query):
+    q = (query or "").lower()
+    return {t for t, kws in _TYPE_HINTS.items() if any(k in q for k in kws)}
+
+
+def _snippet(text, terms, width=260):
+    flat = re.sub(r"\s+", " ", text or "").strip()
+    low = flat.lower()
+    pos = min([low.find(w) for w in terms if low.find(w) != -1] or [0])
+    start = max(0, pos - 60)
+    seg = flat[start:start + width]
+    return ("…" if start > 0 else "") + seg + ("…" if start + width < len(flat) else "")
+
+
+def search(chunks, query, allowed=None, k=8):
+    """Lexical preview: rank by term coverage, damp long chunks, boost intent types.
+    (Semantic retrieval arrives in Step 4.) Returns hits with a clean snippet."""
     terms = [w for w in re.findall(r"\w+", (query or "").lower()) if len(w) > 2]
     if not terms:
         return []
+    pref = _intent_types(query)
     scored = []
     for c in chunks:
         if allowed and c["type"] not in allowed:
             continue
-        t = c["text"].lower()
-        score = sum(t.count(w) for w in terms)
-        if score:
-            scored.append((score, c))
+        t = (c["text"] or "").lower()
+        counts = [t.count(w) for w in terms]
+        coverage = sum(1 for x in counts if x > 0)
+        if not coverage:
+            continue
+        length_norm = 1.0 / (1.0 + len(t) / 2000.0)      # keep long noisy pages from dominating
+        score = (coverage * 100 + sum(counts)) * length_norm
+        if c["type"] in pref:
+            score *= 2.0                                  # type-intent boost
+        scored.append((score, c))
     scored.sort(key=lambda x: -x[0])
-    return [{"score": s, **c} for s, c in scored[:k]]
+    return [{"score": round(sc, 1), "snippet": _snippet(c["text"], terms), **c}
+            for sc, c in scored[:k]]

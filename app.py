@@ -2,9 +2,10 @@
 """Tapestry Knowledge Assistant — Streamlit UI (built step by step).
 
 Step 1: Connect & Explore — verify connectivity, preview sources.
-Step 2: Ingest & Chunk   — fetch -> classify -> chunk (per-type folders), preview,
-                           and check by prompt (lexical, persona-filtered).
-Read-only against Atlassian; chunks are written locally under data/.
+Step 2: Ingest & Chunk   — bring in Confluence + Jira, sort by type, and check
+                           what was captured by asking a question (keyword preview).
+The clean, plain-language ANSWER experience for CXO / Sales / Customers is Step 4.
+Read-only against Atlassian; content is stored locally under data/.
 """
 import os
 import streamlit as st
@@ -15,7 +16,21 @@ import jira
 import ingest
 import personas
 
-st.set_page_config(page_title="Tapestry KB", layout="wide")
+st.set_page_config(page_title="Tapestry Knowledge Assistant", layout="wide")
+
+# Friendly, non-technical names for the internal content types.
+TYPE_LABELS = {
+    "prd": "Product requirement", "pdd": "Product design", "release-note": "Release note",
+    "release-scope": "Release scope", "architecture": "Architecture", "research": "Research",
+    "marketing": "Marketing", "technical": "Technical doc", "qa-report": "QA report",
+    "epic": "Epic", "story": "Story", "bug": "Bug", "task": "Task",
+    "sprint-report": "Sprint report", "issue": "Jira item",
+}
+
+
+def type_label(t):
+    return TYPE_LABELS.get(t, (t or "").replace("-", " ").title())
+
 
 try:
     s = config.settings_safe()
@@ -24,7 +39,6 @@ except SystemExit as e:
     st.stop()
 
 
-# ---- cached fetchers -------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def conf_overview(space):
     return confluence.space_overview(space)
@@ -47,7 +61,7 @@ def chunks_now():
 
 # ---- sidebar ---------------------------------------------------------------
 st.sidebar.title("Tapestry KB")
-step = st.sidebar.radio("Step", ["1 · Connect & Explore", "2 · Ingest & Chunk"])
+step = st.sidebar.radio("Step", ["1 · Connect & Explore", "2 · Ingest & Ask"])
 st.sidebar.divider()
 st.sidebar.caption("Connection")
 st.sidebar.write(s["conf_base"])
@@ -98,7 +112,7 @@ if step.startswith("1"):
             c4.metric("Sprints", o["sprints"])
             if o["by_type"]:
                 st.caption("By type: " + "  ".join(f"**{k}** {v}" for k, v in o["by_type"].items()))
-            st.markdown("**Sample issues** (normalised, with relationships)")
+            st.markdown("**Sample issues**")
             st.dataframe(o["sample_issues"], use_container_width=True, hide_index=True)
             cA, cB = st.columns(2)
             cA.markdown("**Release scope** (fix versions)")
@@ -109,67 +123,61 @@ if step.startswith("1"):
 
 # ========================= STEP 2 ==========================================
 else:
-    st.title("Step 2 — Ingest & Chunk")
-    st.caption("Fetch → classify by type → chunk. Chunks are written to per-type folders "
-               "under `data/chunks/`. Preview them and check by prompt below. "
-               "(PDF/attachment extraction is Step 2b.)")
+    st.title("Step 2 — Ingest & Ask")
+    st.info("This page is an internal **content check** — it confirms we captured the right "
+            "material and that each persona only sees what they should. The polished, "
+            "plain-language answer for CXO / Sales / Customers (one concise reply with sources) "
+            "arrives in **Step 4**.", icon="ℹ️")
 
     with st.form("ingest_form"):
         c = st.columns([1, 1, 2])
         do_conf = c[0].checkbox("Confluence (TPE/TPS)", value=True)
         do_jira = c[1].checkbox("Jira (MFS5T)", value=True)
-        jira_limit = c[2].number_input("Jira sample limit (0 = all 8,735 — slower)",
-                                       min_value=0, value=300, step=100)
-        run = st.form_submit_button("▶ Run ingest")
+        jira_limit = c[2].number_input("Jira sample limit (0 = all)", min_value=0, value=0, step=100)
+        run = st.form_submit_button("▶ Run / refresh ingest")
+    st.caption("Re-running one source (e.g. Confluence only) refreshes just that source — "
+               "it won't re-pull the other.")
 
     if run:
         srcs = [x for x, f in (("confluence", do_conf), ("jira", do_jira)) if f]
         if not srcs:
             st.warning("Pick at least one source.")
         else:
-            with st.spinner("Ingesting… (first full Jira run can take a few minutes)"):
+            with st.spinner("Bringing in content… full Jira can take a few minutes."):
                 counts = ingest.ingest(sources=srcs, jira_limit=(int(jira_limit) or None))
-            st.success("Ingest complete: "
-                       + ", ".join(f"{v} {k}" for k, v in sorted(counts.items())))
+            st.success(f"Done — refreshed {sum(counts.values()):,} documents.")
 
     stt = ingest.stats()
     if not stt["docs"]:
-        st.info("No chunks yet — run an ingest above.")
+        st.info("No content yet — run an ingest above.")
         st.stop()
+    st.caption(f"Knowledge base: **{stt['docs']:,} documents** · {stt['total_chunks']:,} passages "
+               f"across {len(stt['chunks_by_type'])} content types.")
 
-    st.subheader("Chunks by type")
-    rows = [{"type": t, "documents": stt["by_type"].get(t, 0),
-             "chunks": stt["chunks_by_type"].get(t, 0)}
-            for t in sorted(stt["chunks_by_type"])]
-    st.dataframe(rows, use_container_width=True, hide_index=True)
-    st.caption(f"{stt['docs']} documents · {stt['total_chunks']} chunks")
-
-    all_chunks = chunks_now()
-    types = sorted(stt["chunks_by_type"])
-
-    with st.expander("🔎 Browse chunks by type"):
-        ty = st.selectbox("Type", types)
-        shown = [c for c in all_chunks if c["type"] == ty][:15]
-        for cch in shown:
-            st.markdown(f"**{cch['title']}**  ·  `{cch['type']}`  ·  {cch['id']}")
-            st.text((cch["text"] or "")[:800])
-            st.divider()
-
-    st.subheader("✅ Check by prompt (lexical preview)")
-    st.caption("Keyword match over ingested chunks — semantic answering comes in Step 4. "
-               "The persona limits which content types are visible.")
+    st.subheader("Ask a question")
     pc, qc = st.columns([1, 3])
     plabels = personas.labels()
-    persona = pc.selectbox("Persona", list(plabels), format_func=lambda k: plabels[k])
-    query = qc.text_input("Prompt", placeholder="e.g. what is the release scope for 1.0?")
+    persona = pc.selectbox("Who's asking?", list(plabels), format_func=lambda k: plabels[k])
+    query = qc.text_input("Question", placeholder="e.g. What is planned for release 1.0?")
+
     if query:
         allowed = personas.allowed_types(persona)
-        st.caption(f"Persona **{plabels[persona]}** sees types: {', '.join(sorted(allowed))}")
-        hits = ingest.search(all_chunks, query, allowed=allowed, k=10)
+        hits = ingest.search(chunks_now(), query, allowed=allowed, k=6)
         if not hits:
-            st.info("No lexical matches in this persona's visible content types.")
-        for h in hits:
-            link = f"  ·  [open]({h['url']})" if h.get("url") else ""
-            st.markdown(f"**{h['title']}**  ·  `{h['type']}`  ·  score {h['score']}  ·  {h['id']}{link}")
-            st.text((h["text"] or "")[:500])
-            st.divider()
+            st.info(f"Nothing found in the content **{plabels[persona]}** is allowed to see — "
+                    "try another question or persona.")
+        else:
+            st.write(f"Found in **{len(hits)}** document(s):")
+            for h in hits:
+                with st.container(border=True):
+                    st.markdown(
+                        f"**{h['title'] or '(untitled)'}** &nbsp;"
+                        f"<span style='background:#e8eefb;color:#1e4fb0;padding:2px 9px;"
+                        f"border-radius:10px;font-size:0.78em'>{type_label(h['type'])}</span>",
+                        unsafe_allow_html=True)
+                    st.write(h["snippet"])
+                    if h.get("url"):
+                        st.markdown(f"[Open source ↗]({h['url']})")
+        st.caption("This is a keyword-match preview for checking coverage. In Step 4 the same "
+                   "question returns a single, concise, plain-language answer with citations — "
+                   "written for the selected persona.")

@@ -37,10 +37,22 @@ def _split(text, target=TARGET, overlap=OVERLAP):
     return chunks
 
 
+def _norm(x):
+    return re.sub(r"\W+", " ", (x or "")).lower().strip()
+
+
 def chunk_record(rec):
-    """Return a list of chunk texts, each prefixed with the title for standalone context."""
+    """Return chunk texts, each prefixed with the title for standalone context —
+    but only when the chunk doesn't already start with it (avoids duplication)."""
     title = (rec.get("title") or "").strip()
     parts = _split(rec.get("text", ""))
     if not parts:
         return [title] if title else []
-    return [(f"{title}\n\n{p}" if title and title not in p[:len(title) + 5] else p) for p in parts]
+    nt = _norm(title)
+    out = []
+    for p in parts:
+        if title and nt and nt not in _norm(p[:len(title) + 20]):
+            out.append(f"{title}\n\n{p}")
+        else:
+            out.append(p)
+    return out

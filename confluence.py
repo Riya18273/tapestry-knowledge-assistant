@@ -9,22 +9,51 @@ import config
 import classify
 
 
+_MACRO = re.compile(r"</?(ac|ri):[^>]*>", re.I)          # Confluence storage macros
+
+
+def _cell_text(cell_html):
+    t = re.sub(r"<[^>]+>", " ", cell_html)
+    return re.sub(r"\s+", " ", _html.unescape(t)).strip()
+
+
+def _table_to_lines(m):
+    """A <table> -> one line per row: 'cellA | cellB | cellC' (empty cells dropped)."""
+    rows = []
+    for row in re.findall(r"(?is)<tr[^>]*>(.*?)</tr>", m.group(0)):
+        cells = [_cell_text(c) for c in re.findall(r"(?is)<t[dh][^>]*>(.*?)</t[dh]>", row)]
+        cells = [c for c in cells if c]
+        if cells:
+            rows.append(" | ".join(cells))
+    return "\n".join(rows) + "\n"
+
+
 def html_to_text(h):
-    """Confluence storage-format HTML -> readable plain text."""
+    """Confluence storage-format HTML -> readable plain text (tables kept row-wise,
+    macros dropped, noise lines removed)."""
     if not h:
         return ""
+    h = re.sub(r"(?is)<!\[CDATA\[.*?\]\]>", " ", h)
+    h = _MACRO.sub(" ", h)                                # drop macro tags, keep inner text
+    h = re.sub(r"(?is)<table[^>]*>.*?</table>", _table_to_lines, h)
     h = re.sub(r"(?i)<br\s*/?>", "\n", h)
-    h = re.sub(r"(?i)</p>", "\n\n", h)
-    h = re.sub(r"(?i)<li>", "\n- ", h)
-    h = re.sub(r"(?i)</h[1-6]>", "\n\n", h)
-    h = re.sub(r"(?i)<h[1-6][^>]*>", "\n\n", h)
-    h = re.sub(r"(?i)</tr>", "\n", h)
-    h = re.sub(r"(?i)</(td|th)>", " | ", h)
+    h = re.sub(r"(?i)</p>|</h[1-6]>|</div>", "\n", h)
+    h = re.sub(r"(?i)<li[^>]*>", "\n- ", h)
     h = re.sub(r"<[^>]+>", " ", h)
     h = _html.unescape(h)
-    h = re.sub(r"[ \t]+", " ", h)
-    h = re.sub(r"\n{3,}", "\n\n", h)
-    return h.strip()
+    out = []
+    for ln in h.splitlines():
+        ln = re.sub(r"[ \t]+", " ", ln).strip()
+        if not ln:
+            out.append("")
+            continue
+        if re.fullmatch(r"[|\-–—\s]*", ln):    # lone pipes / dashes
+            continue
+        if re.fullmatch(r"\d{1,6}", ln):                 # stray table numbers/ids
+            continue
+        out.append(ln)
+    text = re.sub(r"\n{3,}", "\n\n", "\n".join(out))
+    return text.strip()
 
 
 def iter_pages(space, progress=None):
