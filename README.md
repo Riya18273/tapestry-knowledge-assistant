@@ -17,9 +17,10 @@ Built **incrementally, testable from a Streamlit UI at each step** (like the Rel
       chunk → per-type folders + manifest; **attachment extraction** (PDF/DOCX/PPTX/txt/md/csv,
       clean RAG text) and **child-page type inheritance**; persona-filtered lexical check in the UI.
       Verified 9/10 (product-requirements content lives in Jira, not Confluence).
-  - [ ] Jira ingest (issues/epics/stories/sprints/versions) — next; also maps custom Jira types
-- [ ] Step 3 — Embed & index (single persistent index)
-- [ ] Step 4 — Retrieve & answer (semantic, personas, RBAC)
+  - [ ] Jira ingest (issues/epics/stories/sprints/versions) — also maps custom Jira types
+- [x] **Step 3 — Embed & index** — ChromaDB vector index, local Ollama (`nomic-embed-text`)
+      embeddings; semantic search with per-persona `type` filtering in the UI
+- [ ] Step 4 — Retrieve & answer (LLM composes one concise, cited, persona-tailored answer)
 
 Personas: see `personas.py`. Verification prompts: see `PROMPTS.md`.
 All Atlassian access is **read-only**; chunks/manifest are written locally under `data/` (gitignored).

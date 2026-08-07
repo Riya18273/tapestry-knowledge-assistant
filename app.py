@@ -15,6 +15,7 @@ import confluence
 import jira
 import ingest
 import personas
+import vectorstore
 
 st.set_page_config(page_title="Tapestry Knowledge Assistant", layout="wide")
 
@@ -62,7 +63,8 @@ def chunks_now():
 
 # ---- sidebar ---------------------------------------------------------------
 st.sidebar.title("Tapestry KB")
-step = st.sidebar.radio("Step", ["1 · Connect & Explore", "2 · Ingest & Ask"])
+step = st.sidebar.radio("Step", ["1 · Connect & Explore", "2 · Ingest & Ask",
+                                 "3 · Embed & Search"])
 st.sidebar.divider()
 st.sidebar.caption("Connection")
 st.sidebar.write(s["conf_base"])
@@ -123,7 +125,7 @@ if step.startswith("1"):
 
 
 # ========================= STEP 2 ==========================================
-else:
+elif step.startswith("2"):
     st.title("Step 2 — Ingest & Ask")
     st.info("This page is an internal **content check** — it confirms we captured the right "
             "material and that each persona only sees what they should. The polished, "
@@ -182,3 +184,55 @@ else:
         st.caption("This is a keyword-match preview for checking coverage. In Step 4 the same "
                    "question returns a single, concise, plain-language answer with citations — "
                    "written for the selected persona.")
+
+
+# ========================= STEP 3 ==========================================
+else:
+    st.title("Step 3 — Embed & Search (semantic)")
+    st.caption("Now matching by **meaning** using a vector index (ChromaDB + local Ollama "
+               "embeddings), not just keywords. This is still retrieval — Step 4 turns the top "
+               "results into one written answer.")
+
+    vs = vectorstore.stats()
+    cta, ctb = st.columns([1, 2])
+    if cta.button("⚙️ Build / rebuild vector index"):
+        prog = st.progress(0.0, text="Embedding chunks…")
+        def _p(done, total):
+            prog.progress(done / max(total, 1), text=f"Embedding {done}/{total} chunks…")
+        with st.spinner("Building vector index…"):
+            n = vectorstore.build(progress=_p)
+        prog.empty()
+        st.success(f"Vector index built: {n} vectors.")
+        vs = vectorstore.stats()
+    ctb.metric("Vectors in index", vs["vectors"])
+
+    if not vs["vectors"]:
+        st.info("No vectors yet — click **Build vector index** (uses free local Ollama embeddings).")
+        st.stop()
+
+    st.subheader("Ask a question (semantic)")
+    pc, qc = st.columns([1, 3])
+    plabels = personas.labels()
+    persona = pc.selectbox("Who's asking?", list(plabels), format_func=lambda k: plabels[k])
+    query = qc.text_input("Question", placeholder="e.g. how do we approve transactions manually?")
+    if query:
+        allowed = personas.allowed_types(persona)
+        hits = vectorstore.search(query, allowed=allowed, k=6)
+        if not hits:
+            st.info(f"Nothing relevant in the content **{plabels[persona]}** may see.")
+        else:
+            st.write(f"Top {len(hits)} by meaning:")
+            for h in hits:
+                snippet = " ".join((h.get("text") or "").split())[:300]
+                with st.container(border=True):
+                    st.markdown(
+                        f"**{h['title'] or '(untitled)'}** &nbsp;"
+                        f"<span style='background:#e8eefb;color:#1e4fb0;padding:2px 9px;"
+                        f"border-radius:10px;font-size:0.78em'>{type_label(h['type'])}</span>"
+                        f" &nbsp;<span style='color:#888;font-size:0.78em'>match {h['score']}</span>",
+                        unsafe_allow_html=True)
+                    st.write(snippet + ("…" if len(snippet) == 300 else ""))
+                    if h.get("url"):
+                        st.markdown(f"[Open source ↗]({h['url']})")
+        st.caption("Semantic retrieval (meaning-based). Step 4 will compose these into one "
+                   "concise, cited answer for the persona.")

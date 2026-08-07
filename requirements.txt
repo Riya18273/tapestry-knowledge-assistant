@@ -8,6 +8,9 @@ pdfplumber==0.11.6
 python-docx==1.2.0
 python-pptx==1.0.2
 
+# vector index (Step 3). Embeddings come from local Ollama via urllib (no client lib).
+chromadb==1.5.9
+numpy>=1.26
+
 # Added in later phases:
-#   openai      # Ollama-compatible embeddings (Step 3)
-#   lancedb     # single persistent vector index (Step 3)
+#   anthropic   # Step 4 answer generation (if using Claude)
