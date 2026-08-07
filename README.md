@@ -13,9 +13,11 @@ Built **incrementally, testable from a Streamlit UI at each step** (like the Rel
 
 ## Status
 - [x] **Step 1 — Connect & Explore** sources (Confluence + Jira preview)
-- [x] **Step 2 — Ingest & chunk** — classify by type → chunk → per-type folders (`data/chunks/<type>/`)
-      + manifest; preview + persona-filtered **lexical** prompt check in the UI
-  - [ ] Step 2b — attachment/PDF extraction (research papers, PDDs); refine custom Jira issue types
+- [x] **Step 2 — Ingest & chunk (Confluence)** — classify by type (label/title/ancestor) →
+      chunk → per-type folders + manifest; **attachment extraction** (PDF/DOCX/PPTX/txt/md/csv,
+      clean RAG text) and **child-page type inheritance**; persona-filtered lexical check in the UI.
+      Verified 9/10 (product-requirements content lives in Jira, not Confluence).
+  - [ ] Jira ingest (issues/epics/stories/sprints/versions) — next; also maps custom Jira types
 - [ ] Step 3 — Embed & index (single persistent index)
 - [ ] Step 4 — Retrieve & answer (semantic, personas, RBAC)
 

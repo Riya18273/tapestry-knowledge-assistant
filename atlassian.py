@@ -44,6 +44,27 @@ def request(method, url, payload=None, soft=False):
             raise RuntimeError(f"Network/TLS error {method} {url}: {e}")
 
 
+def get_bytes(url, soft=False):
+    """Fetch raw bytes (e.g. an attachment download) with auth + retry."""
+    req = urllib.request.Request(url, headers={"Authorization": _auth_header()})
+    for attempt in range(5):
+        try:
+            with urllib.request.urlopen(req, context=_CTX, timeout=120) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 502, 503, 504) and attempt < 4:
+                time.sleep(2 * (attempt + 1)); continue
+            if soft:
+                return None
+            raise RuntimeError(f"HTTP {e.code} GET(bytes) {url}")
+        except urllib.error.URLError as e:
+            if attempt < 4:
+                time.sleep(2 * (attempt + 1)); continue
+            if soft:
+                return None
+            raise RuntimeError(f"Network/TLS error GET(bytes) {url}: {e}")
+
+
 def get(url, soft=False):
     return request("GET", url, soft=soft)
 

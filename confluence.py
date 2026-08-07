@@ -7,6 +7,9 @@ from collections import Counter
 import atlassian
 import config
 import classify
+import extract
+
+_DEFAULT_TYPES = ("technical", "marketing")
 
 
 _MACRO = re.compile(r"</?(ac|ri):[^>]*>", re.I)          # Confluence storage macros
@@ -56,32 +59,84 @@ def html_to_text(h):
     return text.strip()
 
 
-def iter_pages(space, progress=None):
-    """Yield normalised page records (text + labels + classified type) for a space."""
+def _classify_with_ancestors(title, labels, space, ancestors):
+    """Own title/label first; if it only hits a space default, inherit a more
+    specific type from the nearest ancestor (so child pages of a PRD read as prd)."""
+    own = classify.classify_confluence(title, labels, space)
+    if own in _DEFAULT_TYPES:
+        for anc in reversed(ancestors or []):        # nearest parent first
+            a = classify.classify_confluence(anc, [], space)
+            if a not in _DEFAULT_TYPES:
+                return a
+    return own
+
+
+def _iter_attachments(base, page):
+    """Yield extracted-text records for a page's supported attachments (inherit page type)."""
+    start = 0
+    while True:
+        d = atlassian.get(f"{base}/rest/api/content/{page['_id']}/child/attachment"
+                          f"?limit=50&start={start}&expand=extensions", soft=True)
+        if not d:
+            return
+        for a in d.get("results", []):
+            fn = a.get("title", "")
+            ext = fn.rsplit(".", 1)[-1].lower() if "." in fn else ""
+            if ext not in extract.ALLOW:
+                continue
+            dl = (a.get("_links", {}) or {}).get("download", "")
+            if not dl:
+                continue
+            blob = atlassian.get_bytes(base + dl, soft=True)
+            if not blob:
+                continue
+            text, _, ok = extract.extract_text(fn, blob)
+            if not ok or not text.strip():
+                continue
+            yield {
+                "source": "confluence", "type": page["type"],
+                "id": f"{page['space']}-att-{a.get('id')}",
+                "title": f"{page['title']} — {fn}", "text": text,
+                "space": page["space"], "url": page["url"],
+                "date": page.get("date"), "attachment": fn,
+            }
+        if d.get("_links", {}).get("next"):
+            start += 50
+        else:
+            break
+
+
+def iter_pages(space, with_attachments=True, progress=None):
+    """Yield page records (+ their attachment records) for a space, classified by
+    type with ancestor inheritance."""
     base = config.settings()["conf_base"]
     q = urllib.parse.quote(space)
     start, seen = 0, 0
     while True:
         d = atlassian.get(f"{base}/rest/api/content?spaceKey={q}&type=page&status=current"
                           f"&limit=50&start={start}"
-                          f"&expand=body.storage,metadata.labels,version")
+                          f"&expand=body.storage,metadata.labels,version,ancestors")
         for p in d.get("results", []):
             body = (p.get("body", {}).get("storage", {}) or {}).get("value", "")
-            text = html_to_text(body)
             labels = [l.get("name", "") for l in
                       ((p.get("metadata", {}).get("labels", {}) or {}).get("results", []) or [])]
+            ancestors = [a.get("title", "") for a in (p.get("ancestors") or [])]
             webui = (p.get("_links", {}) or {}).get("webui", "")
-            yield {
+            rec = {
                 "source": "confluence",
-                "type": classify.classify_confluence(p.get("title", ""), labels, space),
-                "id": f"{space}-{p['id']}", "title": p.get("title", ""), "text": text,
-                "space": space, "labels": labels,
+                "type": _classify_with_ancestors(p.get("title", ""), labels, space, ancestors),
+                "id": f"{space}-{p['id']}", "title": p.get("title", ""),
+                "text": html_to_text(body), "space": space, "labels": labels,
                 "url": (base + webui) if webui else "",
-                "date": (p.get("version", {}) or {}).get("when"),
+                "date": (p.get("version", {}) or {}).get("when"), "_id": p["id"],
             }
+            yield rec
             seen += 1
             if progress:
                 progress(seen)
+            if with_attachments:
+                for att in _iter_attachments(base, rec):
+                    yield att
         if d.get("_links", {}).get("next"):
             start += 50
         else:
