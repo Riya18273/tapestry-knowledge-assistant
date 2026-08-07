@@ -28,7 +28,7 @@ def _safe(x):
 
 
 _META_KEYS = ("source", "type", "id", "title", "date", "url", "space",
-              "fix_version", "parent_epic", "sprint", "status", "labels")
+              "fix_version", "parent_epic", "sprint", "status", "labels", "image_path")
 
 
 def _write_record(data_dir, rec, chunks):
@@ -152,7 +152,8 @@ def load_chunks(data_dir=None):
             for ch in obj.get("chunks", []):
                 out.append({"chunk_id": ch["chunk_id"], "text": ch["text"],
                             "type": obj.get("type"), "source": obj.get("source"),
-                            "title": obj.get("title"), "url": obj.get("url"), "id": obj.get("id")})
+                            "title": obj.get("title"), "url": obj.get("url"),
+                            "id": obj.get("id"), "image_path": obj.get("image_path")})
     return out
 
 

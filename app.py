@@ -269,10 +269,20 @@ else:
         st.markdown("### Answer")
         # escape $ so Streamlit doesn't treat "$15T … $400B" as LaTeX math
         st.markdown((res["answer"] or "_(no answer)_").replace("$", "\\$"))
+        # show any referenced diagrams/images
+        import os as _os
+        shown = 0
+        for sdoc in res.get("sources", []):
+            ip = sdoc.get("image_path")
+            if ip and _os.path.exists(ip) and shown < 3:
+                st.image(ip, caption=sdoc["title"], use_container_width=True)
+                shown += 1
         if res.get("sources"):
             st.markdown("**Sources**")
             for sdoc in res["sources"]:
                 line = f"- {sdoc['title']}  ·  `{type_label(sdoc['type'])}`"
+                if sdoc.get("image_path"):
+                    line += "  ·  🖼️ diagram"
                 if sdoc.get("url"):
                     line += f"  ·  [open ↗]({sdoc['url']})"
                 st.markdown(line)

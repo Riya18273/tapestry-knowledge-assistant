@@ -12,5 +12,5 @@ python-pptx==1.0.2
 chromadb==1.5.9
 numpy>=1.26
 
-# Added in later phases:
-#   anthropic   # Step 4 answer generation (if using Claude)
+# Step 4 answers + diagram vision-captioning (Claude). Embeddings stay local (Ollama).
+anthropic>=0.40

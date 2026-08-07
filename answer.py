@@ -111,5 +111,5 @@ def answer(question, persona, k=6):
     else:
         return {"answer": None, "sources": hits, "provider": "none", "engine_help": detail}
     return {"answer": text.strip(), "provider": f"{eng}:{detail}",
-            "sources": [{"title": h.get("title"), "type": h.get("type"), "url": h.get("url")}
-                        for h in hits]}
+            "sources": [{"title": h.get("title"), "type": h.get("type"), "url": h.get("url"),
+                         "image_path": h.get("image_path") or ""} for h in hits]}

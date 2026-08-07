@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Confluence Cloud connector (read-only). Space overview + samples for the UI."""
+import os
 import html as _html
 import re
 import urllib.parse
@@ -8,6 +9,7 @@ import atlassian
 import config
 import classify
 import extract
+import vision
 
 _DEFAULT_TYPES = ("technical", "marketing")
 
@@ -82,24 +84,39 @@ def _iter_attachments(base, page):
         for a in d.get("results", []):
             fn = a.get("title", "")
             ext = fn.rsplit(".", 1)[-1].lower() if "." in fn else ""
-            if ext not in extract.ALLOW:
-                continue
             dl = (a.get("_links", {}) or {}).get("download", "")
             if not dl:
                 continue
             blob = atlassian.get_bytes(base + dl, soft=True)
             if not blob:
                 continue
-            text, _, ok = extract.extract_text(fn, blob)
-            if not ok or not text.strip():
-                continue
-            yield {
-                "source": "confluence", "type": page["type"],
-                "id": f"{page['space']}-att-{a.get('id')}",
-                "title": f"{page['title']} — {fn}", "text": text,
-                "space": page["space"], "url": page["url"],
-                "date": page.get("date"), "attachment": fn,
-            }
+            if ext in extract.ALLOW:                    # text documents
+                text, _, ok = extract.extract_text(fn, blob)
+                if not ok or not text.strip():
+                    continue
+                yield {
+                    "source": "confluence", "type": page["type"],
+                    "id": f"{page['space']}-att-{a.get('id')}",
+                    "title": f"{page['title']} — {fn}", "text": text,
+                    "space": page["space"], "url": page["url"],
+                    "date": page.get("date"), "attachment": fn,
+                }
+            elif ext in vision.IMAGE_EXT:               # diagrams / screenshots
+                caption = vision.caption_image(blob, fn, context=page["title"])
+                if not caption:                          # decorative / no engine -> skip
+                    continue
+                idir = os.path.join(config.settings()["data_dir"], "images")
+                os.makedirs(idir, exist_ok=True)
+                ipath = os.path.join(idir, f"{page['space']}-img-{a.get('id')}.{ext}")
+                with open(ipath, "wb") as f:
+                    f.write(blob)
+                yield {
+                    "source": "confluence", "type": page["type"],
+                    "id": f"{page['space']}-img-{a.get('id')}",
+                    "title": f"{page['title']} — {fn}", "text": caption,
+                    "space": page["space"], "url": page["url"],
+                    "date": page.get("date"), "attachment": fn, "image_path": ipath,
+                }
         if d.get("_links", {}).get("next"):
             start += 50
         else:
