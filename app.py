@@ -269,14 +269,20 @@ else:
         st.markdown("### Answer")
         # escape $ so Streamlit doesn't treat "$15T … $400B" as LaTeX math
         st.markdown((res["answer"] or "_(no answer)_").replace("$", "\\$"))
-        # show any referenced diagrams/images
+        # render diagrams/images ONLY when the question is visual — otherwise a
+        # captioned image (e.g. a release mailer) would appear on every answer.
         import os as _os
+        _VISUAL = ("show", "diagram", "image", "picture", "visual", "screenshot",
+                   "flowchart", "flow chart", "mockup", "wireframe", "mailer",
+                   "illustration", "figure", "display", "see the", "what does it look")
+        visual_intent = any(w in query.lower() for w in _VISUAL)
         shown = 0
-        for sdoc in res.get("sources", []):
-            ip = sdoc.get("image_path")
-            if ip and _os.path.exists(ip) and shown < 3:
-                st.image(ip, caption=sdoc["title"])   # no width kwarg — version-proof
-                shown += 1
+        if visual_intent:
+            for sdoc in res.get("sources", []):
+                ip = sdoc.get("image_path")
+                if ip and _os.path.exists(ip) and shown < 3:
+                    st.image(ip, caption=sdoc["title"])   # no width kwarg — version-proof
+                    shown += 1
         if res.get("sources"):
             st.markdown("**Sources**")
             for sdoc in res["sources"]:
