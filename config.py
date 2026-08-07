@@ -44,8 +44,10 @@ def settings():
 
 
 def settings_safe():
-    """Same as settings() but with the token masked — safe to render in the UI."""
+    """Same as settings() but the token is removed entirely — never rendered.
+    Exposes only a presence flag and length (length is not sensitive)."""
     s = settings()
     tok = s.pop("token", "")
-    s["token_mask"] = (tok[:3] + "…" + tok[-3:] + f" ({len(tok)} chars)") if tok else "MISSING"
+    s["token_set"] = bool(tok)
+    s["token_len"] = len(tok)
     return s

@@ -39,7 +39,8 @@ with st.sidebar:
     st.write(f"**Jira**\n\n{s['jira_base']}")
     st.write(f"**Project:** {s['jira_project']}")
     st.write(f"**User:** {s['email']}")
-    st.write(f"**Token:** {s['token_mask']}")
+    st.write("**Token:** " + (f"✅ configured ({s['token_len']} chars)"
+                              if s["token_set"] else "❌ missing"))
     st.info("Step 1 of 4 · next: Ingest & chunk", icon="🧭")
 
 tab_conf, tab_jira = st.tabs(["📘 Confluence", "🧩 Jira"])
