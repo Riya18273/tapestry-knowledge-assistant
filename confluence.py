@@ -1,9 +1,62 @@
 # -*- coding: utf-8 -*-
 """Confluence Cloud connector (read-only). Space overview + samples for the UI."""
+import html as _html
+import re
 import urllib.parse
 from collections import Counter
 import atlassian
 import config
+import classify
+
+
+def html_to_text(h):
+    """Confluence storage-format HTML -> readable plain text."""
+    if not h:
+        return ""
+    h = re.sub(r"(?i)<br\s*/?>", "\n", h)
+    h = re.sub(r"(?i)</p>", "\n\n", h)
+    h = re.sub(r"(?i)<li>", "\n- ", h)
+    h = re.sub(r"(?i)</h[1-6]>", "\n\n", h)
+    h = re.sub(r"(?i)<h[1-6][^>]*>", "\n\n", h)
+    h = re.sub(r"(?i)</tr>", "\n", h)
+    h = re.sub(r"(?i)</(td|th)>", " | ", h)
+    h = re.sub(r"<[^>]+>", " ", h)
+    h = _html.unescape(h)
+    h = re.sub(r"[ \t]+", " ", h)
+    h = re.sub(r"\n{3,}", "\n\n", h)
+    return h.strip()
+
+
+def iter_pages(space, progress=None):
+    """Yield normalised page records (text + labels + classified type) for a space."""
+    base = config.settings()["conf_base"]
+    q = urllib.parse.quote(space)
+    start, seen = 0, 0
+    while True:
+        d = atlassian.get(f"{base}/rest/api/content?spaceKey={q}&type=page&status=current"
+                          f"&limit=50&start={start}"
+                          f"&expand=body.storage,metadata.labels,version")
+        for p in d.get("results", []):
+            body = (p.get("body", {}).get("storage", {}) or {}).get("value", "")
+            text = html_to_text(body)
+            labels = [l.get("name", "") for l in
+                      ((p.get("metadata", {}).get("labels", {}) or {}).get("results", []) or [])]
+            webui = (p.get("_links", {}) or {}).get("webui", "")
+            yield {
+                "source": "confluence",
+                "type": classify.classify_confluence(p.get("title", ""), labels, space),
+                "id": f"{space}-{p['id']}", "title": p.get("title", ""), "text": text,
+                "space": space, "labels": labels,
+                "url": (base + webui) if webui else "",
+                "date": (p.get("version", {}) or {}).get("when"),
+            }
+            seen += 1
+            if progress:
+                progress(seen)
+        if d.get("_links", {}).get("next"):
+            start += 50
+        else:
+            break
 
 
 def list_spaces():

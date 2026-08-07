@@ -13,8 +13,11 @@ Built **incrementally, testable from a Streamlit UI at each step** (like the Rel
 
 ## Status
 - [x] **Step 1 — Connect & Explore** sources (Confluence + Jira preview)
-- [ ] Step 2 — Ingest & chunk (per content type)
+- [x] **Step 2 — Ingest & chunk** — classify by type → chunk → per-type folders (`data/chunks/<type>/`)
+      + manifest; preview + persona-filtered **lexical** prompt check in the UI
+  - [ ] Step 2b — attachment/PDF extraction (research papers, PDDs); refine custom Jira issue types
 - [ ] Step 3 — Embed & index (single persistent index)
-- [ ] Step 4 — Retrieve & answer (personas, RBAC)
+- [ ] Step 4 — Retrieve & answer (semantic, personas, RBAC)
 
-All connectors are **read-only**.
+Personas: see `personas.py`. Verification prompts: see `PROMPTS.md`.
+All Atlassian access is **read-only**; chunks/manifest are written locally under `data/` (gitignored).
