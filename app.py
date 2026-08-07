@@ -25,6 +25,7 @@ TYPE_LABELS = {
     "marketing": "Marketing", "technical": "Technical doc", "qa-report": "QA report",
     "epic": "Epic", "story": "Story", "bug": "Bug", "task": "Task",
     "sprint-report": "Sprint report", "issue": "Jira item",
+    "meeting-notes": "Meeting notes (internal)",
 }
 
 
@@ -132,11 +133,11 @@ else:
     with st.form("ingest_form"):
         c = st.columns([1, 1, 2])
         do_conf = c[0].checkbox("Confluence (TPE/TPS)", value=True)
-        do_jira = c[1].checkbox("Jira (MFS5T)", value=True)
+        do_jira = c[1].checkbox("Jira (MFS5T)", value=False)
         jira_limit = c[2].number_input("Jira sample limit (0 = all)", min_value=0, value=0, step=100)
         run = st.form_submit_button("▶ Run / refresh ingest")
-    st.caption("Re-running one source (e.g. Confluence only) refreshes just that source — "
-               "it won't re-pull the other.")
+    st.caption("Focusing on **Confluence** first — we'll add Jira once Confluence is classified "
+               "and chunked correctly. Re-running one source refreshes only that source.")
 
     if run:
         srcs = [x for x, f in (("confluence", do_conf), ("jira", do_jira)) if f]

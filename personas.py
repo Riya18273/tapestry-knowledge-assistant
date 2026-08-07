@@ -15,19 +15,20 @@ PERSONAS = {
     "product_manager": {
         "label": "Product Manager", "sensitivity": "internal",
         "allowed_types": ["prd", "pdd", "release-note", "release-scope", "architecture",
-                          "epic", "story", "research", "marketing", "sprint-report"],
+                          "epic", "story", "research", "marketing", "sprint-report",
+                          "meeting-notes", "technical", "qa-report"],
         "style": "Product-focused: scope, rationale, status, roadmap.",
     },
     "engineer": {
         "label": "Engineer / Developer", "sensitivity": "internal",
         "allowed_types": ["pdd", "architecture", "technical", "epic", "story", "bug",
-                          "task", "release-note", "sprint-report"],
+                          "task", "release-note", "sprint-report", "meeting-notes"],
         "style": "Technical and precise; include design and implementation detail.",
     },
     "qa": {
         "label": "QA / Test Engineer", "sensitivity": "internal",
         "allowed_types": ["qa-report", "story", "bug", "task", "release-note",
-                          "release-scope", "sprint-report"],
+                          "release-scope", "sprint-report", "meeting-notes", "technical"],
         "style": "Test-oriented: acceptance criteria, defects, coverage.",
     },
     "sales_marketing": {
@@ -37,7 +38,8 @@ PERSONAS = {
     },
     "support": {
         "label": "Support", "sensitivity": "internal",
-        "allowed_types": ["release-note", "bug", "story", "architecture", "qa-report"],
+        "allowed_types": ["release-note", "bug", "story", "architecture", "qa-report",
+                          "technical", "meeting-notes"],
         "style": "Troubleshooting-focused: known issues, fixes, workarounds.",
     },
     "customer": {
