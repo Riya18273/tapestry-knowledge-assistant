@@ -9,3 +9,6 @@ venv/
 volume_report.json
 # generated verification reports contain internal content snippets — keep out of git
 reports/
+
+# source design docs (keep internal HLDs local)
+*.docx

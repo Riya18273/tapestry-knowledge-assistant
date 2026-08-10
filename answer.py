@@ -53,14 +53,30 @@ def _ollama_chat_model():
 
 
 def engine_status():
-    """(engine, detail) — what Step 4 will use, or ('none', how-to-enable)."""
-    if os.getenv("ANTHROPIC_API_KEY"):
-        return "anthropic", os.getenv("TAPESTRY_LLM_MODEL", "claude-sonnet-4-5")
+    """(engine, detail) for the answer step, honoring TAPESTRY_LLM_MODE:
+      local    -> local Ollama only (ZERO Claude credits) [default]
+      claude   -> Claude (uses credits)
+      fallback -> local primary; Claude only on low confidence (near-zero)
+    Falls back to whatever is actually available."""
+    mode = os.getenv("TAPESTRY_LLM_MODE", "local").lower()
+    key = os.getenv("ANTHROPIC_API_KEY")
+    model = os.getenv("TAPESTRY_LLM_MODEL", "claude-sonnet-4-5")
+    if mode == "claude" and key:
+        return "anthropic", model
     m = _ollama_chat_model()
     if m:
         return "ollama", m
-    return "none", ("Enable an engine: add ANTHROPIC_API_KEY to .env, "
-                    "or `ollama pull llama3.2` for a free local model.")
+    if key:                       # local requested but no local model present
+        return "anthropic", model
+    return "none", ("Enable a local model (`ollama pull llama3.2`) for zero-credit mode, "
+                    "or set ANTHROPIC_API_KEY.")
+
+
+def min_confidence():
+    try:
+        return float(os.getenv("TAPESTRY_MIN_CONFIDENCE", "0.35"))
+    except ValueError:
+        return 0.35
 
 
 def _prompt(question, hits):
@@ -95,9 +111,14 @@ def answer(question, persona, k=6):
     """Retrieve (persona-filtered) + compose one grounded answer. Returns a dict."""
     allowed = personas.allowed_types(persona)
     hits = retrieve.hybrid(question, allowed=allowed, k=k)
-    if not hits:
-        return {"answer": "I don't have information on that in the content available to this persona.",
-                "sources": [], "provider": "none"}
+    # confidence gate: best dense cosine among hits. Low -> refuse (never call an LLM),
+    # so we don't answer (or pay Claude) on weakly-supported questions.
+    confidence = max((h.get("cosine") or 0.0) for h in hits) if hits else 0.0
+    if not hits or confidence < min_confidence():
+        return {"answer": "I couldn't find sufficient support in the Product KB to answer that "
+                          "confidently. Try rephrasing, or narrow it to a specific release/topic.",
+                "sources": [], "provider": "refused",
+                "confidence": round(confidence, 3), "fallback_used": False}
     p = personas.PERSONAS.get(persona, {})
     safety = _SAFE_PUBLIC if p.get("sensitivity") == "public" else _SAFE_INTERNAL
     system = _SYSTEM.format(label=p.get("label", persona), style=p.get("style", ""), safety=safety)
@@ -109,7 +130,10 @@ def answer(question, persona, k=6):
     elif eng == "ollama":
         text = _call_ollama(system, user, detail)
     else:
-        return {"answer": None, "sources": hits, "provider": "none", "engine_help": detail}
+        return {"answer": None, "sources": [], "provider": "none",
+                "confidence": round(confidence, 3), "fallback_used": False, "engine_help": detail}
     return {"answer": text.strip(), "provider": f"{eng}:{detail}",
+            "confidence": round(confidence, 3),
+            "fallback_used": eng == "anthropic" and os.getenv("TAPESTRY_LLM_MODE", "local") == "fallback",
             "sources": [{"title": h.get("title"), "type": h.get("type"), "url": h.get("url"),
                          "image_path": h.get("image_path") or ""} for h in hits]}

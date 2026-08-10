@@ -14,3 +14,7 @@ numpy>=1.26
 
 # Step 4 answers + diagram vision-captioning (Claude). Embeddings stay local (Ollama).
 anthropic>=0.40
+
+# "Ask MobiFin" RAG service (api.py) — the shared backend for Product UI / Teams / web.
+fastapi>=0.110
+uvicorn>=0.29

@@ -43,6 +43,8 @@ def hybrid(query, allowed=None, k=6, pool=20, rrf=60):
     for rank, h in enumerate(dense):
         cid = h.get("chunk_id") or h.get("id")
         scores[cid] = scores.get(cid, 0.0) + 1.0 / (rrf + rank)
+        h = dict(h)
+        h["cosine"] = h.get("score")          # keep dense cosine for the confidence gate
         meta[cid] = h
     for rank, h in enumerate(lex):
         cid = h.get("chunk_id")
