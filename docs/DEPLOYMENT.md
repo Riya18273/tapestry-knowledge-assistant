@@ -26,8 +26,12 @@ Chroma vector KB (local)  +  data/chunks + images
 |---|---|---|---|
 | GET | `/api/v1/health` | liveness + engine | → `{status, vectors, engine, engine_detail, min_confidence}` |
 | POST | `/api/v1/chat` | grounded answer | `{question, persona, release?, issue_id?, page_url?}` → `{answer, sources[], confidence, fallback_used, provider}` |
-| POST | `/api/v1/ingest` | (re)build KB + index | `{sources:["confluence"], rebuild:true}` → `{ingested, vectors}` |
+| POST | `/api/v1/ingest` | (re)build KB + index — **runs in background** | `{sources:["confluence"], rebuild:true}` → `{status:"started"}` |
+| GET | `/api/v1/ingest/status` | ingest progress | → `{running, last, documents}` |
 | GET | `/api/v1/documents` | KB summary | → per-type doc/chunk counts |
+
+> `/ingest` returns immediately and rebuilds in the background (a full build is slow);
+> `/chat` keeps serving the live index until the new one is flipped in. Poll `/ingest/status`.
 
 `persona` is one of `personas.py` (executive, sales_marketing, customer, product_manager,
 engineer, qa, support) — it scopes which content the answer may use.
@@ -71,10 +75,10 @@ OPENAI_BASE_URL=http://localhost:11434/v1
 TAPESTRY_EMBED_MODEL=nomic-embed-text
 
 # --- diagrams (ingest-time only) ---
-# leave ANTHROPIC_API_KEY unset for full zero-credit; captioning then skips
-# (or use a local vision model via TAPESTRY_VISION_MODEL once wired)
+TAPESTRY_VISION_MODE=off         # off = zero-credit (no captioning). "claude" = caption
+                                 # diagrams via Claude vision (small one-time token cost).
 
-# ANTHROPIC_API_KEY=...          # ONLY if TAPESTRY_LLM_MODE=claude|fallback
+# ANTHROPIC_API_KEY=...          # ONLY if TAPESTRY_LLM_MODE=claude|fallback or VISION_MODE=claude
 ```
 
 **Guarantee $0 Claude:** set `TAPESTRY_LLM_MODE=local` (or simply don't set

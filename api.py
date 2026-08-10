@@ -12,8 +12,9 @@ Zero-credit by default: TAPESTRY_LLM_MODE=local uses local Ollama; embeddings ar
 always local; the confidence gate refuses weak matches so no LLM is called at all.
 Run:  uvicorn api:app --host 0.0.0.0 --port 8000
 """
+import threading
 from typing import Optional, List
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
@@ -22,6 +23,22 @@ import ingest
 import vectorstore
 
 app = FastAPI(title="Tapestry Ask MobiFin API", version="1.0")
+
+# ingest runs in the background (heavy); a lock prevents concurrent rebuilds.
+_ingest_lock = threading.Lock()
+_ingest_state = {"running": False, "last": None}
+
+
+def _run_ingest(sources, rebuild):
+    try:
+        counts = ingest.ingest(sources=tuple(sources))
+        vectors = vectorstore.build() if rebuild else vectorstore.stats().get("vectors", 0)
+        _ingest_state["last"] = {"ingested": counts, "vectors": vectors}
+    except Exception as e:  # noqa: BLE001
+        _ingest_state["last"] = {"error": str(e)}
+    finally:
+        _ingest_state["running"] = False
+        _ingest_lock.release()
 
 
 class ChatIn(BaseModel):
@@ -73,12 +90,22 @@ def chat(inp: ChatIn):
 
 
 @app.post("/api/v1/ingest")
-def ingest_endpoint(inp: IngestIn):
-    # NOTE: synchronous + slow for a full build. For production, run behind a
-    # background worker/queue. Kept simple here for the MVP.
-    counts = ingest.ingest(sources=tuple(inp.sources))
-    vectors = vectorstore.build() if inp.rebuild else vectorstore.stats().get("vectors", 0)
-    return {"ingested": counts, "vectors": vectors, "rebuilt": inp.rebuild}
+def ingest_endpoint(inp: IngestIn, background: BackgroundTasks):
+    # Runs in the BACKGROUND (a full build is slow); the response returns at once.
+    # A lock prevents concurrent rebuilds. Zero-downtime: /chat keeps serving the
+    # live index until the new one is built and flipped.
+    if not _ingest_lock.acquire(blocking=False):
+        return {"status": "already_running", "documents": ingest.stats()}
+    _ingest_state["running"] = True
+    background.add_task(_run_ingest, inp.sources, inp.rebuild)
+    return {"status": "started",
+            "note": "runs in background; poll GET /api/v1/ingest/status or /documents"}
+
+
+@app.get("/api/v1/ingest/status")
+def ingest_status():
+    return {"running": _ingest_state["running"], "last": _ingest_state["last"],
+            "documents": ingest.stats()}
 
 
 @app.get("/api/v1/documents")

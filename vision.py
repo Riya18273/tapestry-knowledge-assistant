@@ -20,8 +20,14 @@ _PROMPT = (
 )
 
 
+def mode():
+    # off (default) = zero-credit: no Claude at ingest, per the deployment HLD.
+    # claude = caption via Claude vision (small one-time token cost).
+    return os.getenv("TAPESTRY_VISION_MODE", "off").lower()
+
+
 def available():
-    return bool(os.getenv("ANTHROPIC_API_KEY"))
+    return mode() == "claude" and bool(os.getenv("ANTHROPIC_API_KEY"))
 
 
 def caption_image(image_bytes, filename, context=""):
