@@ -12,3 +12,6 @@ reports/
 
 # source design docs (keep internal HLDs local)
 *.docx
+
+# local tool binaries (e.g. cloudflared.exe)
+*.exe
