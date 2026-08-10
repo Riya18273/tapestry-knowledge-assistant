@@ -17,11 +17,16 @@ confidence gate refuses weak matches so no LLM is called at all.
 Run:  uvicorn api:app --host 0.0.0.0 --port 8000
 """
 import os
+import re
+import json
+import hmac
+import base64
+import hashlib
 import threading
 from typing import Optional, List
 
-from fastapi import FastAPI, BackgroundTasks, Response
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi import FastAPI, BackgroundTasks, Response, Request
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from pydantic import BaseModel
 
 import answer
@@ -140,6 +145,57 @@ def image(name: str):
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def home():
     return _CHAT_HTML
+
+
+# ------------------------------------------------- Teams Outgoing Webhook --
+_PERSONA_ALIAS = {"cxo": "executive", "exec": "executive", "sales": "sales_marketing",
+                  "marketing": "sales_marketing", "pm": "product_manager",
+                  "product manager": "product_manager", "dev": "engineer",
+                  "developer": "engineer"}
+
+
+def _clean_teams_text(t):
+    t = re.sub(r"(?is)<at>.*?</at>", " ", t or "")   # drop the @bot mention
+    t = re.sub(r"<[^>]+>", " ", t)
+    return " ".join(t.split()).strip()
+
+
+def _persona_from(text, default):
+    """Allow '[sales] question' or 'engineer: question' to pick a persona for testing."""
+    m = re.match(r"\s*[\[]?\s*([a-z /]+?)\s*[\]:]\s*(.+)$", text, re.I)
+    if m:
+        key = m.group(1).strip().lower()
+        pid = _PERSONA_ALIAS.get(key, key.replace(" ", "_"))
+        if pid in personas.PERSONAS:
+            return pid, m.group(2).strip()
+    return default, text
+
+
+@app.post("/api/v1/teams", include_in_schema=False)
+async def teams(request: Request):
+    body = await request.body()
+    secret = os.getenv("TAPESTRY_TEAMS_SECRET", "")
+    if secret:                                        # verify HMAC-SHA256 (base64 secret)
+        try:
+            mac = hmac.new(base64.b64decode(secret), body, hashlib.sha256).digest()
+            expected = "HMAC " + base64.b64encode(mac).decode()
+        except Exception:
+            expected = None
+        provided = request.headers.get("authorization", "")
+        if not expected or not hmac.compare_digest(expected, provided):
+            return JSONResponse({"type": "message", "text": "Unauthorized."}, status_code=401)
+
+    data = json.loads(body or b"{}")
+    question = _clean_teams_text(data.get("text", ""))
+    if not question:
+        return JSONResponse({"type": "message", "text": "Ask me a question about Tapestry."})
+    persona, question = _persona_from(question, os.getenv("TAPESTRY_TEAMS_PERSONA", "engineer"))
+    r = answer.answer(question, persona)
+    reply = r.get("answer") or "I couldn't find an answer in the Product KB."
+    srcs = [s["title"] for s in r.get("sources", []) if s.get("title")][:4]
+    if srcs:
+        reply += "\n\n**Sources:** " + ", ".join(srcs)
+    return JSONResponse({"type": "message", "text": reply})
 
 
 # --------------------------------------------------------------- web chat --

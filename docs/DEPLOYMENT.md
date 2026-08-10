@@ -82,6 +82,10 @@ TAPESTRY_VISION_MODE=off         # off = zero-credit (no captioning). "claude" =
                                  # diagrams via Claude vision (small one-time token cost).
 
 # ANTHROPIC_API_KEY=...          # ONLY if TAPESTRY_LLM_MODE=claude|fallback or VISION_MODE=claude
+
+# --- Teams Outgoing Webhook (see §7a) ---
+TAPESTRY_TEAMS_SECRET=           # the security token Teams shows when you create the webhook
+TAPESTRY_TEAMS_PERSONA=engineer  # default persona for Teams questions
 ```
 
 **Guarantee $0 Claude:** set `TAPESTRY_LLM_MODE=local` (or simply don't set
@@ -146,6 +150,35 @@ CMD ["uvicorn","api:app","--host","0.0.0.0","--port","8000"]
 
 **Cost with Azure Bot:** ~**$0 licensing** (F0). Real costs = the compute you already run
 + a public HTTPS endpoint (below).
+
+---
+
+## 7a. Teams quick test — Outgoing Webhook (no Azure, $0)
+
+Endpoint is built in: **`POST /api/v1/teams`** (HMAC-verified; replies with a grounded
+answer + sources; `[persona]` prefix supported, e.g. `[sales] what's new in 1.0.1?`).
+
+**Prerequisites:** you own (or can edit) a Team; you can run an outbound **public tunnel**;
+the API is running locally.
+
+1. **Expose the API over public HTTPS** (Teams' cloud must reach it). Easiest for testing:
+   ```bash
+   # option A — cloudflared (no account needed for a temp URL)
+   cloudflared tunnel --url http://localhost:8000
+   # option B — ngrok
+   ngrok http 8000
+   ```
+   Copy the `https://…` URL it prints.
+2. **Create the webhook in Teams:** target Team → **••• → Manage team → Apps →
+   "Create an outgoing webhook"** (bottom). Name = `AskTapestry`, **Callback URL** =
+   `https://<your-tunnel>/api/v1/teams`, add a description/icon → **Create**. Teams shows a
+   **security token** (base64) — copy it.
+3. **Wire the secret:** put it in `.env` as `TAPESTRY_TEAMS_SECRET=…`, then **restart** the API.
+4. **Ask in the team:** `@AskTapestry what changed in release 1.0.1?`
+   (optionally `@AskTapestry [customer] what's new for me?`).
+
+**Limits (Outgoing Webhook):** only in the team it's added to; **@mention required**; no 1:1
+DM, no proactive messages, no store publishing. For those, use an Azure Bot (§6).
 
 ---
 
