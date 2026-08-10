@@ -14,6 +14,7 @@ Run:  uvicorn api:app --host 0.0.0.0 --port 8000
 """
 from typing import Optional, List
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 import answer
@@ -43,6 +44,11 @@ class ChatOut(BaseModel):
 class IngestIn(BaseModel):
     sources: List[str] = ["confluence"]
     rebuild: bool = True
+
+
+@app.get("/", include_in_schema=False)
+def root():
+    return RedirectResponse(url="/docs")
 
 
 @app.get("/api/v1/health")
