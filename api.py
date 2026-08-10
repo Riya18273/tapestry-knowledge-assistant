@@ -1,30 +1,42 @@
 # -*- coding: utf-8 -*-
 """Tapestry "Ask MobiFin" RAG service — a thin FastAPI wrapper over the existing
-engine. One shared backend for every channel (Product UI panel, Teams bot, web).
+engine. One shared backend for every channel; also serves an internal web chat at /.
 
 Endpoints:
-  GET  /api/v1/health     — status, vector count, active answer engine
-  POST /api/v1/chat       — grounded answer (persona-scoped, confidence-gated)
-  POST /api/v1/ingest     — (re)build the KB from a source, then rebuild the index
-  GET  /api/v1/documents   — indexed KB summary (per content type)
+  GET  /                      — internal "Ask Tapestry" web chat (HTML)
+  GET  /api/v1/health         — status, vector count, active answer engine
+  GET  /api/v1/personas       — persona list for the UI
+  POST /api/v1/chat           — grounded answer (persona-scoped, confidence-gated)
+  POST /api/v1/ingest         — (re)build the KB (background) then rebuild the index
+  GET  /api/v1/ingest/status  — ingest progress
+  GET  /api/v1/documents      — indexed KB summary
+  GET  /api/v1/image/{name}   — serve a captioned diagram image (from data/images)
 
-Zero-credit by default: TAPESTRY_LLM_MODE=local uses local Ollama; embeddings are
-always local; the confidence gate refuses weak matches so no LLM is called at all.
+Zero-credit by default: TAPESTRY_LLM_MODE=local (Ollama), embeddings local, and the
+confidence gate refuses weak matches so no LLM is called at all.
 Run:  uvicorn api:app --host 0.0.0.0 --port 8000
 """
+import os
 import threading
 from typing import Optional, List
-from fastapi import FastAPI, BackgroundTasks
-from fastapi.responses import RedirectResponse
+
+from fastapi import FastAPI, BackgroundTasks, Response
+from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel
 
 import answer
 import ingest
 import vectorstore
+import personas
+import config
 
 app = FastAPI(title="Tapestry Ask MobiFin API", version="1.0")
 
-# ingest runs in the background (heavy); a lock prevents concurrent rebuilds.
+_IMG_DIR = os.path.join(config.settings()["data_dir"], "images")
+_VISUAL = ("show", "diagram", "image", "picture", "visual", "screenshot", "flowchart",
+           "flow chart", "mockup", "wireframe", "mailer", "illustration", "figure",
+           "display", "see the", "what does it look")
+
 _ingest_lock = threading.Lock()
 _ingest_state = {"running": False, "last": None}
 
@@ -41,11 +53,12 @@ def _run_ingest(sources, rebuild):
         _ingest_lock.release()
 
 
+# ------------------------------------------------------------------ models --
 class ChatIn(BaseModel):
     question: str
     persona: str = "engineer"
-    product: Optional[str] = None      # reserved (single-product KB today)
-    release: Optional[str] = None      # page context (improves relevance)
+    product: Optional[str] = None
+    release: Optional[str] = None
     issue_id: Optional[str] = None
     page_url: Optional[str] = None
 
@@ -63,27 +76,32 @@ class IngestIn(BaseModel):
     rebuild: bool = True
 
 
-@app.get("/", include_in_schema=False)
-def root():
-    return RedirectResponse(url="/docs")
-
-
+# --------------------------------------------------------------- endpoints --
 @app.get("/api/v1/health")
 def health():
     eng, detail = answer.engine_status()
-    return {"status": "ok",
-            "vectors": vectorstore.stats().get("vectors", 0),
-            "engine": eng, "engine_detail": detail,
-            "min_confidence": answer.min_confidence()}
+    return {"status": "ok", "vectors": vectorstore.stats().get("vectors", 0),
+            "engine": eng, "engine_detail": detail, "min_confidence": answer.min_confidence()}
+
+
+@app.get("/api/v1/personas")
+def personas_list():
+    return [{"id": k, "label": v} for k, v in personas.labels().items()]
 
 
 @app.post("/api/v1/chat", response_model=ChatOut)
 def chat(inp: ChatIn):
-    # weave any page context (release/issue) into the query for better retrieval
     ctx = " ".join(x for x in (inp.release, inp.issue_id) if x)
     q = f"{inp.question} (context: {ctx})" if ctx else inp.question
     r = answer.answer(q, inp.persona)
-    return {"answer": r.get("answer"), "sources": r.get("sources", []),
+    visual = any(w in inp.question.lower() for w in _VISUAL)   # show images only if asked
+    srcs = []
+    for s in r.get("sources", []):
+        ip = s.pop("image_path", None)                          # never leak local FS paths
+        if visual and ip and os.path.exists(ip):
+            s["image_url"] = "/api/v1/image/" + os.path.basename(ip)
+        srcs.append(s)
+    return {"answer": r.get("answer"), "sources": srcs,
             "confidence": r.get("confidence", 0.0),
             "fallback_used": r.get("fallback_used", False),
             "provider": r.get("provider", "")}
@@ -91,15 +109,11 @@ def chat(inp: ChatIn):
 
 @app.post("/api/v1/ingest")
 def ingest_endpoint(inp: IngestIn, background: BackgroundTasks):
-    # Runs in the BACKGROUND (a full build is slow); the response returns at once.
-    # A lock prevents concurrent rebuilds. Zero-downtime: /chat keeps serving the
-    # live index until the new one is built and flipped.
     if not _ingest_lock.acquire(blocking=False):
         return {"status": "already_running", "documents": ingest.stats()}
     _ingest_state["running"] = True
     background.add_task(_run_ingest, inp.sources, inp.rebuild)
-    return {"status": "started",
-            "note": "runs in background; poll GET /api/v1/ingest/status or /documents"}
+    return {"status": "started", "note": "runs in background; poll GET /api/v1/ingest/status"}
 
 
 @app.get("/api/v1/ingest/status")
@@ -111,3 +125,94 @@ def ingest_status():
 @app.get("/api/v1/documents")
 def documents():
     return ingest.stats()
+
+
+@app.get("/api/v1/image/{name}")
+def image(name: str):
+    if "/" in name or "\\" in name or ".." in name:      # no path traversal
+        return Response(status_code=400)
+    p = os.path.join(_IMG_DIR, name)
+    if not os.path.isfile(p):
+        return Response(status_code=404)
+    return FileResponse(p)
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def home():
+    return _CHAT_HTML
+
+
+# --------------------------------------------------------------- web chat --
+_CHAT_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ask Tapestry</title>
+<style>
+ :root{--navy:#0E1E36;--blue:#2E6BF0;--bg:#f4f6fa;--card:#fff;--ink:#16202e;--muted:#5a6675;--line:#e2e7ef;--chip:#eaf0fb}
+ *{box-sizing:border-box} body{margin:0;font-family:"Segoe UI",system-ui,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+ header{background:linear-gradient(135deg,var(--navy),#132a4a);color:#fff;padding:14px 20px;display:flex;align-items:center;gap:12px}
+ header b{font-size:18px} header span{color:#9fb6da;font-size:12px}
+ .wrap{max-width:860px;margin:0 auto;padding:16px}
+ #log{display:flex;flex-direction:column;gap:14px;margin-bottom:14px}
+ .msg{padding:12px 14px;border-radius:12px;max-width:92%}
+ .u{align-self:flex-end;background:var(--navy);color:#fff}
+ .a{align-self:flex-start;background:var(--card);border:1px solid var(--line);width:100%}
+ .a h4{margin:.4em 0 .2em;font-size:15px;color:var(--navy)} .a p{margin:.4em 0;line-height:1.5} .a ul{margin:.3em 0 .3em 1.1em}
+ .a code{background:#eef;padding:1px 5px;border-radius:5px;font-size:.9em}
+ .meta{margin-top:8px;font-size:12px;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+ .chip{background:var(--chip);color:#1e4fb0;border-radius:10px;padding:2px 9px;font-size:11px}
+ .src{margin-top:8px;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:8px}
+ .src a{color:var(--blue);text-decoration:none} .a img{max-width:100%;border:1px solid var(--line);border-radius:8px;margin:8px 0}
+ .row{position:sticky;bottom:0;background:var(--bg);padding:10px 0;display:flex;gap:8px}
+ select,input,button{font:inherit} select{padding:9px;border:1px solid var(--line);border-radius:10px;background:#fff}
+ input{flex:1;padding:11px 13px;border:1px solid var(--line);border-radius:10px}
+ button{background:var(--blue);color:#fff;border:0;border-radius:10px;padding:0 18px;cursor:pointer}
+ button:disabled{opacity:.5;cursor:default}
+ .hint{color:var(--muted);font-size:12px;margin:2px 0 12px}
+</style></head><body>
+<header><b>Ask Tapestry</b><span id="eng">·</span></header>
+<div class="wrap">
+  <div class="hint">Grounded answers from the Tapestry knowledge base. Pick who's asking, then ask a question.</div>
+  <div id="log"></div>
+  <div class="row">
+    <select id="persona"></select>
+    <input id="q" placeholder="e.g. What is new in the latest release?" autocomplete="off">
+    <button id="send">Ask</button>
+  </div>
+</div>
+<script>
+const log=document.getElementById('log'), qi=document.getElementById('q'),
+      ps=document.getElementById('persona'), btn=document.getElementById('send');
+const esc=s=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const inl=s=>esc(s).replace(/\\*\\*(.+?)\\*\\*/g,'<strong>$1</strong>').replace(/`([^`]+)`/g,'<code>$1</code>');
+function render(t){let h='',inL=false;for(const raw of (t||'').split('\\n')){const l=raw.trim();
+  const m=l.match(/^[-•*]\\s+(.*)/); if(m){if(!inL){h+='<ul>';inL=true;}h+='<li>'+inl(m[1])+'</li>';continue;}
+  if(inL){h+='</ul>';inL=false;} if(!l)continue;
+  if(/^#{1,6}\\s/.test(l))h+='<h4>'+inl(l.replace(/^#{1,6}\\s/,''))+'</h4>';
+  else if(/^sources:/i.test(l))h+='<div class="src">'+inl(l)+'</div>';
+  else h+='<p>'+inl(l)+'</p>';} if(inL)h+='</ul>'; return h;}
+function add(cls,html){const d=document.createElement('div');d.className='msg '+cls;d.innerHTML=html;log.appendChild(d);d.scrollIntoView({behavior:'smooth',block:'end'});return d;}
+async function boot(){
+  try{const h=await (await fetch('/api/v1/health')).json();
+    document.getElementById('eng').textContent='· engine: '+h.engine+' · '+h.vectors+' passages';}catch(e){}
+  const ps_=await (await fetch('/api/v1/personas')).json();
+  ps.innerHTML=ps_.map(p=>`<option value="${p.id}">${p.label}</option>`).join('');
+  const eng=ps_.findIndex(p=>p.id==='engineer'); if(eng>=0)ps.selectedIndex=eng;
+}
+async function ask(){
+  const q=qi.value.trim(); if(!q)return; qi.value='';
+  add('u',esc(q)); const a=add('a','<em>Thinking…</em>'); btn.disabled=true;
+  try{
+    const r=await (await fetch('/api/v1/chat',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({question:q,persona:ps.value})})).json();
+    let html=render(r.answer||'(no answer)');
+    (r.sources||[]).forEach(s=>{ if(s.image_url) html+=`<img src="${s.image_url}" alt="${esc(s.title||'')}">`; });
+    html+=`<div class="meta"><span class="chip">confidence ${(r.confidence||0).toFixed(2)}</span>`+
+          `<span class="chip">${esc(r.provider||'')}</span>`+(r.fallback_used?'<span class="chip">fallback</span>':'')+`</div>`;
+    const srcs=(r.sources||[]).filter(s=>s.title);
+    if(srcs.length)html+='<div class="src"><b>Sources:</b> '+srcs.map(s=>s.url?`<a href="${s.url}" target="_blank">${esc(s.title)}</a>`:esc(s.title)).join(' · ')+'</div>';
+    a.innerHTML=html;
+  }catch(e){a.innerHTML='<span style="color:#c0392b">Error: '+esc(String(e))+'</span>';}
+  btn.disabled=false; qi.focus();
+}
+btn.onclick=ask; qi.addEventListener('keydown',e=>{if(e.key==='Enter')ask();}); boot();
+</script></body></html>"""

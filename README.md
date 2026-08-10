@@ -29,8 +29,9 @@ Built **incrementally, testable from a Streamlit UI at each step** (like the Rel
 
 **Deploy as a service:** `api.py` is a FastAPI "Ask MobiFin" backend (`/api/v1/chat`,
 `/ingest`, `/health`) wrapping the engine with a **local zero-credit mode** + **confidence
-gate** — the shared backend for a Product-UI panel, Teams bot, or web chat. Guide:
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).  Run: `uvicorn api:app --port 8000`.
+gate** — the shared backend for a Product-UI panel, Teams bot, or web chat. It also serves a
+built-in internal **"Ask Tapestry" web chat at `/`**. Guide:
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).  Run: `uvicorn api:app --port 8000` → open http://localhost:8000/.
 
 Personas: see `personas.py`. Verification prompts: see `PROMPTS.md`.
 All Atlassian access is **read-only**; chunks/manifest are written locally under `data/` (gitignored).

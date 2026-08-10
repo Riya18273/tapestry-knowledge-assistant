@@ -24,6 +24,9 @@ Chroma vector KB (local)  +  data/chunks + images
 
 | Method | Path | Purpose | Body / Result |
 |---|---|---|---|
+| GET | `/` | **built-in internal "Ask Tapestry" web chat** (HTML) | — |
+| GET | `/api/v1/personas` | persona list for the UI | → `[{id,label}]` |
+| GET | `/api/v1/image/{name}` | serve a captioned diagram | → image file |
 | GET | `/api/v1/health` | liveness + engine | → `{status, vectors, engine, engine_detail, min_confidence}` |
 | POST | `/api/v1/chat` | grounded answer | `{question, persona, release?, issue_id?, page_url?}` → `{answer, sources[], confidence, fallback_used, provider}` |
 | POST | `/api/v1/ingest` | (re)build KB + index — **runs in background** | `{sources:["confluence"], rebuild:true}` → `{status:"started"}` |
@@ -127,8 +130,9 @@ CMD ["uvicorn","api:app","--host","0.0.0.0","--port","8000"]
 - **Product UI panel** ("Ask MobiFin" button) — deepest integration: the page can pass
   `release`/`issue_id`/`page_url` for context. Needs product-team dev work.
 - **Teams bot** — fastest adoption, built-in identity → persona/RBAC. See §6/§7.
-- **Web chat** — a small page (served by FastAPI or embedded) that POSTs to `/chat`.
-  No Teams/Azure required.
+- **Web chat** — **built in**: the service serves an "Ask Tapestry" page at `/`
+  (persona selector, grounded answers, sources, inline diagrams). No Teams/Azure required,
+  $0 — ideal for internal use and stakeholder demos.
 
 ---
 
