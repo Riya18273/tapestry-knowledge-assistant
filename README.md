@@ -34,5 +34,7 @@ built-in internal **"Ask Tapestry" web chat at `/`**. Guide:
 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).  Run: `uvicorn api:app --port 8000` → open http://localhost:8000/.
 
 Architecture & tools: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Spin up a KB for another product (reusable, $0): `python new_kb.py --dest ../acme-kb …` — see
+[docs/NEW_KB_GUIDE.md](docs/NEW_KB_GUIDE.md).
 Personas: see `personas.py`. Verification prompts: see `PROMPTS.md`.
 All Atlassian access is **read-only**; chunks/manifest are written locally under `data/` (gitignored).
