@@ -33,5 +33,6 @@ gate** — the shared backend for a Product-UI panel, Teams bot, or web chat. It
 built-in internal **"Ask Tapestry" web chat at `/`**. Guide:
 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).  Run: `uvicorn api:app --port 8000` → open http://localhost:8000/.
 
+Architecture & tools: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 Personas: see `personas.py`. Verification prompts: see `PROMPTS.md`.
 All Atlassian access is **read-only**; chunks/manifest are written locally under `data/` (gitignored).
