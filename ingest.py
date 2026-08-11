@@ -78,6 +78,7 @@ def _clear_sources(data_dir, sources):
 
 def ingest(sources=("confluence", "jira"), spaces=None, jira_limit=None, progress=None):
     """(Re)build the chunk store for the given sources only. Returns per-type counts."""
+    config.require_atlassian()                           # fail clearly if creds missing
     s = config.settings()
     data_dir = s["data_dir"]
     os.makedirs(data_dir, exist_ok=True)

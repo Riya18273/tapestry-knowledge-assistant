@@ -27,20 +27,32 @@ def _req(k):
 
 
 def settings():
+    """Config for serving + ingest. Atlassian creds are OPTIONAL (only needed for
+    ingest), so a serve-only deployment runs with just Ollama + a prebuilt index."""
     _load_env()
     spaces = os.getenv("TAPESTRY_CONFLUENCE_SPACES") or os.getenv("TAPESTRY_CONFLUENCE_SPACE", "")
     here = os.path.dirname(os.path.abspath(__file__))
     return {
-        "conf_base": _req("TAPESTRY_CONFLUENCE_BASE_URL").rstrip("/"),
+        "conf_base": (os.getenv("TAPESTRY_CONFLUENCE_BASE_URL", "") or "").rstrip("/"),
         "spaces": [s.strip() for s in spaces.split(",") if s.strip()],
-        "jira_base": _req("TAPESTRY_JIRA_BASE_URL").rstrip("/"),
-        "jira_project": _req("TAPESTRY_JIRA_PROJECT"),
-        "email": _req("TAPESTRY_EMAIL"),
-        "token": _req("TAPESTRY_API_TOKEN"),
+        "jira_base": (os.getenv("TAPESTRY_JIRA_BASE_URL", "") or "").rstrip("/"),
+        "jira_project": os.getenv("TAPESTRY_JIRA_PROJECT", ""),
+        "email": os.getenv("TAPESTRY_EMAIL", ""),
+        "token": os.getenv("TAPESTRY_API_TOKEN", ""),
         "data_dir": os.getenv("TAPESTRY_DATA_DIR", os.path.join(here, "data")),
         "ollama_base": os.getenv("OPENAI_BASE_URL", "http://localhost:11434/v1"),
         "embed_model": os.getenv("TAPESTRY_EMBED_MODEL", "nomic-embed-text"),
     }
+
+
+def require_atlassian():
+    """Call before an ingest — fail clearly if Atlassian creds are missing."""
+    s = settings()
+    missing = [k for k in ("conf_base", "jira_base", "email", "token") if not s[k]]
+    if missing:
+        raise SystemExit("Ingest needs Atlassian config: set "
+                         "TAPESTRY_CONFLUENCE_BASE_URL / JIRA_BASE_URL / EMAIL / API_TOKEN.")
+    return s
 
 
 def settings_safe():

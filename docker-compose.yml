@@ -1,0 +1,35 @@
+# Ask Tapestry — API + local Ollama, in zero-credit mode. One command:  docker compose up -d --build
+services:
+  ollama:                       # local embeddings + answer model (no Claude credits)
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+    # GPU (optional, NVIDIA): uncomment for faster answers
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - capabilities: ["gpu"]
+
+  api:                          # FastAPI RAG service + built-in web chat at /
+    build: .
+    depends_on:
+      - ollama
+    env_file:
+      - .env                    # secrets: TAPESTRY_TEAMS_SECRET, Confluence creds (for ingest)
+    environment:
+      OPENAI_BASE_URL: http://ollama:11434/v1   # reach Ollama over the compose network
+      TAPESTRY_EMBED_MODEL: nomic-embed-text
+      TAPESTRY_CHAT_MODEL: llama3.2
+      TAPESTRY_LLM_MODE: local  # zero Claude credits
+      TAPESTRY_VISION_MODE: "off"
+      TAPESTRY_DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data        # KB chunks + vector index persist here
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+volumes:
+  ollama_models:

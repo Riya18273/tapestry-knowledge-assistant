@@ -111,21 +111,45 @@ curl -X POST http://localhost:8000/api/v1/chat -H "Content-Type: application/jso
   -d "{\"question\":\"What is new in release 1.0.1?\",\"persona\":\"sales_marketing\"}"
 ```
 
-**Production (systemd/Windows service or container)** — run under a process manager and
-put it behind a reverse proxy (TLS). Example Dockerfile:
+### Docker (recommended for IT — one command)
+Files in the repo: **`Dockerfile`**, **`docker-compose.yml`**, **`.dockerignore`**. Compose
+brings up **Ollama + the API together** in local zero-credit mode.
 
-```dockerfile
-FROM python:3.12-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-EXPOSE 8000
-CMD ["uvicorn","api:app","--host","0.0.0.0","--port","8000"]
+```bash
+cp .env.example .env          # add TAPESTRY_TEAMS_SECRET + Confluence creds (for ingest) as needed
+docker compose up -d --build
+# one-time: pull the local models into the Ollama volume
+docker compose exec ollama ollama pull nomic-embed-text
+docker compose exec ollama ollama pull llama3.2
+# build the KB index once (needs Atlassian creds in .env), OR copy a prebuilt ./data
+curl -X POST http://localhost:8000/api/v1/ingest -H "Content-Type: application/json" -d "{}"
+# watch progress, then verify
+curl http://localhost:8000/api/v1/ingest/status
+curl http://localhost:8000/api/v1/health        # -> engine: ollama, vectors > 0
 ```
-> Ollama runs as a separate service; point `OPENAI_BASE_URL` at it (host or sidecar).
-> Mount/persist `data/` so the KB + index survive restarts. `POST /api/v1/ingest` is
-> synchronous and slow on a full build — run it off-peak or move it to a background worker.
+- `./data` is a bind mount (KB + index persist / can be pre-seeded); Ollama models persist
+  in the `ollama_models` volume. GPU is optional (uncomment the `deploy` block).
+- Put a **TLS reverse proxy** in front for the public endpoint (see §7a). Zero-credit vars
+  (`TAPESTRY_LLM_MODE=local`, `VISION_MODE=off`) are set by compose.
+
+> `POST /api/v1/ingest` runs in the **background** (`/ingest/status` to watch) — it never
+> blocks `/chat`, which keeps serving the live index until the rebuild flips.
+
+---
+
+## IT hand-off checklist
+- [ ] **Host** the container(s) on an approved VM (existing internal Docker host is fine).
+      ~4 vCPU / 8–16 GB RAM / ~10 GB disk. `docker compose up -d --build`.
+- [ ] **Pull models** (`nomic-embed-text`, `llama3.2`) into the Ollama volume (one-time).
+- [ ] **Seed the KB**: run one `POST /api/v1/ingest` (needs Atlassian creds), or copy a prebuilt `./data`.
+- [ ] **Public HTTPS endpoint** for Teams: reverse proxy (TLS via Let's Encrypt) on a stable
+      domain, or the corporate API gateway. Only `/api/v1/teams` must be public; `/` can stay internal.
+- [ ] **Secrets** in `.env` (not committed): `TAPESTRY_TEAMS_SECRET`, Confluence creds for ingest.
+- [ ] **Teams Outgoing Webhook** → Callback URL `https://<host>/api/v1/teams` → paste its token
+      into `TAPESTRY_TEAMS_SECRET` → restart the `api` service.
+- [ ] **Scheduled refresh**: cron `POST /api/v1/ingest` off-peak.
+- [ ] **Monitoring**: log confidence/provider; alert if `/health` is down.
+- **Cost:** $0 Claude, $0 bot licensing; only a ~USD 10–15/yr domain if not using the gateway.
 
 ---
 

@@ -1,0 +1,12 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+.env
+data/
+reports/
+*.exe
+.venv/
+venv/
+*.docx
+*.log
