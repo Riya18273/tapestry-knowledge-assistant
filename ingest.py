@@ -76,6 +76,23 @@ def _clear_sources(data_dir, sources):
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
+def _man_line(rec, chunks):
+    """Manifest entry — includes version/parent so incremental ingest can diff."""
+    return {"id": rec["id"], "source": rec["source"], "type": rec["type"],
+            "title": rec.get("title"), "date": rec.get("date"),
+            "n_chunks": len(chunks), "hash": _hash(rec.get("text", "")),
+            "version": rec.get("version"), "parent": rec.get("parent"),
+            "space": rec.get("space")}
+
+
+def _remove_chunk_file(data_dir, rec):
+    f = os.path.join(data_dir, "chunks", rec.get("type", ""), f"{_safe(rec.get('id'))}.json")
+    try:
+        os.remove(f)
+    except OSError:
+        pass
+
+
 def ingest(sources=("confluence", "jira"), spaces=None, jira_limit=None, progress=None):
     """(Re)build the chunk store for the given sources only. Returns per-type counts."""
     config.require_atlassian()                           # fail clearly if creds missing
@@ -91,10 +108,7 @@ def ingest(sources=("confluence", "jira"), spaces=None, jira_limit=None, progres
         if not chunks:
             return
         _write_record(data_dir, rec, chunks)
-        mf.write(json.dumps({"id": rec["id"], "source": rec["source"], "type": rec["type"],
-                             "title": rec.get("title"), "date": rec.get("date"),
-                             "n_chunks": len(chunks), "hash": _hash(rec.get("text", ""))},
-                            ensure_ascii=False) + "\n")
+        mf.write(json.dumps(_man_line(rec, chunks), ensure_ascii=False) + "\n")
         counts[rec["type"]] += 1
         if progress:
             progress(sum(counts.values()), rec["type"])
@@ -211,3 +225,79 @@ def search(chunks, query, allowed=None, k=8):
     scored.sort(key=lambda x: -x[0])
     return [{"score": round(sc, 1), "snippet": _snippet(c["text"], terms), **c}
             for sc, c in scored[:k]]
+
+
+def ingest_incremental(spaces=None, progress=None):
+    """Confluence incremental refresh: detect new/changed/deleted pages by version,
+    re-embed ONLY those (upsert), delete removed ones. Falls back to a full build the
+    first time (when the manifest has no version tracking or the index is empty)."""
+    import vectorstore
+    config.require_atlassian()
+    s = config.settings()
+    data_dir = s["data_dir"]
+    os.makedirs(data_dir, exist_ok=True)
+    man = _load_manifest(data_dir)
+    page_ver = {r["id"]: r.get("version") for r in man
+                if r.get("source") == "confluence" and r.get("version") is not None}
+
+    if not page_ver or vectorstore.stats().get("vectors", 0) == 0:
+        counts = ingest(sources=("confluence",), spaces=spaces)     # first time -> full
+        return {"mode": "full", "ingested": counts, "vectors": vectorstore.build()}
+
+    by_id = {r["id"]: r for r in man}
+    children = {}
+    for r in man:
+        if r.get("parent"):
+            children.setdefault(r["parent"], []).append(r["id"])
+
+    to_delete, to_process = set(), []
+    for space in (spaces or s["spaces"]):
+        cur = confluence.page_index(space)
+        for rid, info in cur.items():
+            if page_ver.get(rid) != info["version"]:           # new or changed
+                to_process.append((space, info["pid"], rid))
+        for rid in [x for x in page_ver if x.startswith(space + "-")]:
+            if rid not in cur:                                 # page deleted
+                to_delete.add(rid)
+                to_delete.update(children.get(rid, []))
+
+    # changed/new: drop the page's old records, fetch fresh
+    new_recs = []
+    for space, pid, rid in to_process:
+        if rid in by_id:
+            to_delete.add(rid)
+            to_delete.update(children.get(rid, []))
+        new_recs.extend(confluence.fetch_page(space, pid))
+
+    del_chunks = []
+    for rid in to_delete:
+        r = by_id.get(rid)
+        if r:
+            del_chunks += [f"{rid}#{i}" for i in range(r.get("n_chunks", 0))]
+            _remove_chunk_file(data_dir, r)
+
+    upserts, new_entries = [], []
+    for rec in new_recs:
+        chs = chunking.chunk_record(rec)
+        if not chs:
+            continue
+        _write_record(data_dir, rec, chs)
+        for i, c in enumerate(chs):
+            upserts.append({"chunk_id": f"{rec['id']}#{i}", "text": c, "type": rec["type"],
+                            "source": rec["source"], "title": rec.get("title"),
+                            "url": rec.get("url"), "id": rec["id"],
+                            "image_path": rec.get("image_path")})
+        new_entries.append(_man_line(rec, chs))
+
+    vectorstore.delete(del_chunks)
+    vectorstore.upsert(upserts)
+
+    new_ids = {rec["id"] for rec in new_recs}
+    keep = [r for r in man if r["id"] not in to_delete and r["id"] not in new_ids]
+    with open(_manifest_path(data_dir), "w", encoding="utf-8") as f:
+        for r in keep + new_entries:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+    return {"mode": "incremental", "changed_or_new_pages": len(to_process),
+            "removed_records": len(to_delete), "upserted_chunks": len(upserts),
+            "removed_chunks": len(del_chunks), "vectors": vectorstore.stats().get("vectors", 0)}

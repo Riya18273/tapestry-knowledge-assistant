@@ -46,11 +46,14 @@ _ingest_lock = threading.Lock()
 _ingest_state = {"running": False, "last": None}
 
 
-def _run_ingest(sources, rebuild):
+def _run_ingest(sources, rebuild, incremental):
     try:
-        counts = ingest.ingest(sources=tuple(sources))
-        vectors = vectorstore.build() if rebuild else vectorstore.stats().get("vectors", 0)
-        _ingest_state["last"] = {"ingested": counts, "vectors": vectors}
+        if incremental and set(sources) <= {"confluence"}:
+            _ingest_state["last"] = ingest.ingest_incremental()      # embed only changed pages
+        else:
+            counts = ingest.ingest(sources=tuple(sources))
+            vectors = vectorstore.build() if rebuild else vectorstore.stats().get("vectors", 0)
+            _ingest_state["last"] = {"mode": "full", "ingested": counts, "vectors": vectors}
     except Exception as e:  # noqa: BLE001
         _ingest_state["last"] = {"error": str(e)}
     finally:
@@ -79,6 +82,7 @@ class ChatOut(BaseModel):
 class IngestIn(BaseModel):
     sources: List[str] = ["confluence"]
     rebuild: bool = True
+    incremental: bool = True      # confluence: re-embed only new/changed pages
 
 
 # --------------------------------------------------------------- endpoints --
@@ -117,7 +121,7 @@ def ingest_endpoint(inp: IngestIn, background: BackgroundTasks):
     if not _ingest_lock.acquire(blocking=False):
         return {"status": "already_running", "documents": ingest.stats()}
     _ingest_state["running"] = True
-    background.add_task(_run_ingest, inp.sources, inp.rebuild)
+    background.add_task(_run_ingest, inp.sources, inp.rebuild, inp.incremental)
     return {"status": "started", "note": "runs in background; poll GET /api/v1/ingest/status"}
 
 

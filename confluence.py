@@ -99,7 +99,7 @@ def _iter_attachments(base, page):
                     "id": f"{page['space']}-att-{a.get('id')}",
                     "title": f"{page['title']} — {fn}", "text": text,
                     "space": page["space"], "url": page["url"],
-                    "date": page.get("date"), "attachment": fn,
+                    "date": page.get("date"), "attachment": fn, "parent": page["id"],
                 }
             elif ext in vision.IMAGE_EXT:               # diagrams / screenshots
                 caption = vision.caption_image(blob, fn, context=page["title"])
@@ -116,6 +116,7 @@ def _iter_attachments(base, page):
                     "title": f"{page['title']} — {fn}", "text": caption,
                     "space": page["space"], "url": page["url"],
                     "date": page.get("date"), "attachment": fn, "image_path": ipath,
+                    "parent": page["id"],
                 }
         if d.get("_links", {}).get("next"):
             start += 50
@@ -123,9 +124,25 @@ def _iter_attachments(base, page):
             break
 
 
+def _page_record(base, p, space):
+    body = (p.get("body", {}).get("storage", {}) or {}).get("value", "")
+    labels = [l.get("name", "") for l in
+              ((p.get("metadata", {}).get("labels", {}) or {}).get("results", []) or [])]
+    ancestors = [a.get("title", "") for a in (p.get("ancestors") or [])]
+    webui = (p.get("_links", {}) or {}).get("webui", "")
+    ver = (p.get("version", {}) or {})
+    return {
+        "source": "confluence",
+        "type": _classify_with_ancestors(p.get("title", ""), labels, space, ancestors),
+        "id": f"{space}-{p['id']}", "title": p.get("title", ""),
+        "text": html_to_text(body), "space": space, "labels": labels,
+        "url": (base + webui) if webui else "",
+        "date": ver.get("when"), "version": ver.get("number"), "_id": p["id"],
+    }
+
+
 def iter_pages(space, with_attachments=True, progress=None):
-    """Yield page records (+ their attachment records) for a space, classified by
-    type with ancestor inheritance."""
+    """Yield page records (+ their attachment records) for a space."""
     base = config.settings()["conf_base"]
     q = urllib.parse.quote(space)
     start, seen = 0, 0
@@ -134,19 +151,7 @@ def iter_pages(space, with_attachments=True, progress=None):
                           f"&limit=50&start={start}"
                           f"&expand=body.storage,metadata.labels,version,ancestors")
         for p in d.get("results", []):
-            body = (p.get("body", {}).get("storage", {}) or {}).get("value", "")
-            labels = [l.get("name", "") for l in
-                      ((p.get("metadata", {}).get("labels", {}) or {}).get("results", []) or [])]
-            ancestors = [a.get("title", "") for a in (p.get("ancestors") or [])]
-            webui = (p.get("_links", {}) or {}).get("webui", "")
-            rec = {
-                "source": "confluence",
-                "type": _classify_with_ancestors(p.get("title", ""), labels, space, ancestors),
-                "id": f"{space}-{p['id']}", "title": p.get("title", ""),
-                "text": html_to_text(body), "space": space, "labels": labels,
-                "url": (base + webui) if webui else "",
-                "date": (p.get("version", {}) or {}).get("when"), "_id": p["id"],
-            }
+            rec = _page_record(base, p, space)
             yield rec
             seen += 1
             if progress:
@@ -158,6 +163,37 @@ def iter_pages(space, with_attachments=True, progress=None):
             start += 50
         else:
             break
+
+
+def page_index(space):
+    """Cheap {page_rec_id: {version, pid}} map (no bodies) for change detection."""
+    base = config.settings()["conf_base"]
+    q = urllib.parse.quote(space)
+    out, start = {}, 0
+    while True:
+        d = atlassian.get(f"{base}/rest/api/content?spaceKey={q}&type=page&status=current"
+                          f"&limit=100&start={start}&expand=version")
+        for p in d.get("results", []):
+            out[f"{space}-{p['id']}"] = {"version": (p.get("version", {}) or {}).get("number"),
+                                         "pid": p["id"]}
+        if d.get("_links", {}).get("next"):
+            start += 100
+        else:
+            break
+    return out
+
+
+def fetch_page(space, pid):
+    """Yield the page record + its attachment records for a single page id."""
+    base = config.settings()["conf_base"]
+    p = atlassian.get(f"{base}/rest/api/content/{pid}"
+                      f"?expand=body.storage,metadata.labels,version,ancestors", soft=True)
+    if not p:
+        return
+    rec = _page_record(base, p, space)
+    yield rec
+    for att in _iter_attachments(base, rec):
+        yield att
 
 
 def list_spaces():

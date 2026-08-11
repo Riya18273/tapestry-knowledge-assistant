@@ -33,8 +33,12 @@ Chroma vector KB (local)  +  data/chunks + images
 | GET | `/api/v1/ingest/status` | ingest progress | → `{running, last, documents}` |
 | GET | `/api/v1/documents` | KB summary | → per-type doc/chunk counts |
 
-> `/ingest` returns immediately and rebuilds in the background (a full build is slow);
-> `/chat` keeps serving the live index until the new one is flipped in. Poll `/ingest/status`.
+> `/ingest` returns immediately and runs in the background. It is **incremental by default**
+> (Confluence): it detects new/changed/deleted pages by version and **re-embeds only those**
+> (fast, $0) — `/chat` keeps serving throughout. The **first run after upgrading** does one full
+> build to populate version tracking; set `{"incremental": false}` to force a full rebuild.
+> Point a **scheduler** (cron) at this daily so new release notes/manuals in Confluence flow in
+> automatically. Poll `/api/v1/ingest/status`.
 
 `persona` is one of `personas.py` (executive, sales_marketing, customer, product_manager,
 engineer, qa, support) — it scopes which content the answer may use.

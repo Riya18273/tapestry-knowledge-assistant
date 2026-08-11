@@ -91,6 +91,33 @@ def build(progress=None, batch=64):
     return coll.count()
 
 
+def upsert(chunks, batch=64):
+    """Add/replace chunks in the live collection (incremental — embeds only these)."""
+    chunks = list(chunks or [])
+    if not chunks:
+        return 0
+    coll = _client().get_or_create_collection(_active_name(), metadata={"hnsw:space": "cosine"})
+    for i in range(0, len(chunks), batch):
+        part = chunks[i:i + batch]
+        coll.upsert(ids=[c["chunk_id"] for c in part],
+                    embeddings=embed.embed_texts([c["text"] for c in part]),
+                    documents=[c["text"] for c in part],
+                    metadatas=[_meta(c) for c in part])
+    return len(chunks)
+
+
+def delete(chunk_ids):
+    """Remove chunk ids from the live collection."""
+    ids = list(chunk_ids or [])
+    if not ids:
+        return 0
+    try:
+        _client().get_collection(_active_name()).delete(ids=ids)
+    except Exception:
+        return 0
+    return len(ids)
+
+
 def stats():
     try:
         return {"vectors": _client().get_collection(_active_name()).count()}
