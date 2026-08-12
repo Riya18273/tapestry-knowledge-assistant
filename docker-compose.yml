@@ -26,7 +26,7 @@ services:
       TAPESTRY_VISION_MODE: "off"
       TAPESTRY_DATA_DIR: /app/data
     volumes:
-      - ./data:/app/data        # KB chunks + vector index persist here
+      - ./data:/app/data:z      # KB chunks + vector index persist here (:z for RHEL/SELinux)
     ports:
       - "8000:8000"
     restart: unless-stopped
