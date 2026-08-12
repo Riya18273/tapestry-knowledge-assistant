@@ -141,6 +141,33 @@ curl http://localhost:8000/api/v1/health        # -> engine: ollama, vectors > 0
 
 ---
 
+## Internal-only deployment (Docker, direct internet) — copy-paste for IT
+Web chat for LAN users at `http://10.30.156.124:8000/`. **No Teams, no public endpoint, no TLS.**
+
+**IT provides:** a Docker host (`10.30.156.124`) with Docker + compose · ~4 vCPU / 8–16 GB RAM /
+~15 GB disk · **direct outbound internet** (Docker Hub, PyPI, registry.ollama.ai, Atlassian) ·
+inbound **TCP 8000** open on the LAN · the Confluence API token.
+
+```bash
+# on the server (10.30.156.124)
+git clone https://github.com/Riya18273/tapestry-knowledge-assistant.git tapestry-kb
+cd tapestry-kb
+cp .env.example .env         # set TAPESTRY_CONFLUENCE_* + EMAIL + API_TOKEN ; keep TAPESTRY_LLM_MODE=local
+docker compose up -d --build
+docker compose exec ollama ollama pull nomic-embed-text
+docker compose exec ollama ollama pull llama3.2
+curl -s -X POST http://localhost:8000/api/v1/ingest -H "Content-Type: application/json" -d '{}'
+curl -s http://localhost:8000/api/v1/ingest/status     # poll until running=false
+curl -s http://localhost:8000/api/v1/health            # -> engine: ollama, vectors > 0
+sudo ufw allow 8000/tcp                                # (firewalld: firewall-cmd --add-port=8000/tcp --permanent && firewall-cmd --reload)
+```
+Users then open **`http://10.30.156.124:8000/`**. Cost: **$0** (local Ollama). Schedule a daily
+`POST /api/v1/ingest` (incremental) so new Confluence docs flow in automatically.
+
+**Not needed:** public DNS, TLS cert, NAT/port-forward, Azure Bot, Teams admin, Anthropic account.
+
+---
+
 ## IT hand-off checklist
 - [ ] **Host** the container(s) on an approved VM (existing internal Docker host is fine).
       ~4 vCPU / 8–16 GB RAM / ~10 GB disk. `docker compose up -d --build`.
