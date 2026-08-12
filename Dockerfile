@@ -4,7 +4,7 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # deps first for layer caching
-COPY requirements.txt requirements-core.txt ./
+COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
