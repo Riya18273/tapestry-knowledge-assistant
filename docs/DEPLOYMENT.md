@@ -289,6 +289,58 @@ Create an outgoing webhook → **Callback URL** `https://ask-tapestry.company.co
 
 ---
 
+## 7c. Azure hosting (Option C) — public HTTPS without touching the internal server
+
+Run the **same Docker stack on an Azure Linux VM**. Ollama runs on the VM, so AI stays **$0**;
+Caddy gives automatic HTTPS on a public name that Teams can reach. Only cost = the VM.
+
+### 1) Create the VM
+Ubuntu 22.04, ~**Standard_B4ms** (4 vCPU / 16 GB; min B2ms 2/8). No GPU. Open **22, 80, 443**
+(NOT 8000 publicly). Give it a **DNS name**.
+```bash
+az group create -n tapestry-rg -l centralindia
+az vm create -g tapestry-rg -n tapestry-vm --image Ubuntu2204 --size Standard_B4ms \
+  --admin-username azureuser --generate-ssh-keys --public-ip-address-dns-name tapestry-ask
+az vm open-port -g tapestry-rg -n tapestry-vm --port 80,443 --priority 900
+# FQDN -> tapestry-ask.<region>.cloudapp.azure.com
+```
+
+### 2) Deploy the stack (SSH into the VM)
+```bash
+curl -fsSL https://get.docker.com | sh && sudo usermod -aG docker $USER   # re-login after
+git clone https://github.com/Riya18273/tapestry-knowledge-assistant.git && cd tapestry-knowledge-assistant
+cp .env.example .env       # set Confluence creds ; keep TAPESTRY_LLM_MODE=local
+docker compose up -d --build
+docker compose exec ollama ollama pull nomic-embed-text
+docker compose exec ollama ollama pull llama3.2
+curl -s -X POST http://localhost:8000/api/v1/ingest -H "Content-Type: application/json" -d '{}'
+curl -s http://localhost:8000/api/v1/health        # engine: ollama, vectors > 0
+```
+
+### 3) Public HTTPS via Caddy (auto-TLS; exposes ONLY the Teams endpoint)
+`/etc/caddy/Caddyfile`:
+```caddy
+tapestry-ask.<region>.cloudapp.azure.com {
+    handle /api/v1/teams { reverse_proxy localhost:8000 }
+    handle { respond 404 }
+}
+```
+```bash
+sudo apt install -y caddy
+sudo systemctl restart caddy      # auto-provisions Let's Encrypt TLS for the FQDN
+```
+`https://<fqdn>/api/v1/teams` is now live with valid TLS.
+
+### 4) Wire Teams
+Create the Outgoing Webhook → Callback `https://<fqdn>/api/v1/teams` → paste token into `.env`
+(`TAPESTRY_TEAMS_SECRET`) → `docker compose restart api` → `@AskTapestry …`.
+
+**Cost:** only the VM (~USD 60–120/mo by size; stop it when idle). **$0 Claude.**
+**Alternative:** Azure **Container Apps** gives managed HTTPS ingress (no VM/TLS ops) but needs
+multi-container + model-volume setup; the VM is simpler for a first cut.
+
+---
+
 ## 7. Teams — **if Azure Bot is NOT available** (and the extra cost)
 
 If you can't register an Azure Bot (no Azure subscription / org policy), you do **not** need
