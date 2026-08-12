@@ -237,6 +237,58 @@ DM, no proactive messages, no store publishing. For those, use an Azure Bot (§6
 
 ---
 
+## 7b. Exposing the internal server to Teams (reverse proxy — option A)
+
+Goal: give Microsoft's Teams cloud a **public HTTPS** path that forwards **only**
+`/api/v1/teams` to the internal service at `10.30.156.124:8000`, while `/` (web chat),
+`/docs`, and `/ingest` stay **internal-only**. The endpoint is already HMAC-verified, so
+only your Teams webhook can use it.
+
+**IT prerequisites:** a proxy/DMZ host reachable from the internet · a **public DNS name**
+(e.g. `ask-tapestry.<company>.com`) → the proxy's public IP · **inbound 443** open to the proxy ·
+the proxy able to reach `10.30.156.124:8000` internally · a TLS cert (Let's Encrypt = free).
+
+**nginx** (`/etc/nginx/conf.d/ask-tapestry.conf`):
+```nginx
+server {
+    listen 443 ssl;
+    server_name ask-tapestry.company.com;
+    ssl_certificate     /etc/letsencrypt/live/ask-tapestry.company.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ask-tapestry.company.com/privkey.pem;
+
+    # expose ONLY the Teams webhook; everything else is not public
+    location = /api/v1/teams {
+        proxy_pass http://10.30.156.124:8000/api/v1/teams;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Forwarded-For   $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+    location / { return 404; }
+}
+```
+
+**Caddy** (auto-TLS; `Caddyfile`) — simpler alternative:
+```caddy
+ask-tapestry.company.com {
+    handle /api/v1/teams {
+        reverse_proxy 10.30.156.124:8000
+    }
+    handle {
+        respond 404
+    }
+}
+```
+
+**Then create the webhook** (a team owner): Team → ••• → Manage team → Apps →
+Create an outgoing webhook → **Callback URL** `https://ask-tapestry.company.com/api/v1/teams`
+→ copy the security token → set `TAPESTRY_TEAMS_SECRET` in the server's `.env` → restart the
+`api` service → `@AskTapestry …`.
+
+> Security: only `/api/v1/teams` is published; the HMAC check rejects any unsigned request.
+> Cost: $0 licensing + $0 Claude; only the domain (~USD 10–15/yr) if not using an existing gateway.
+
+---
+
 ## 7. Teams — **if Azure Bot is NOT available** (and the extra cost)
 
 If you can't register an Azure Bot (no Azure subscription / org policy), you do **not** need
