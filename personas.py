@@ -45,7 +45,12 @@ PERSONAS = {
     "customer": {
         "label": "Customer (external)", "sensitivity": "public",
         "allowed_types": ["release-note", "marketing"],
-        "style": "External-safe: only released, customer-facing information.",
+        "style": "External-safe: only released, customer-facing information. Plain, "
+                "non-technical language — describe what a capability lets the customer DO "
+                "or achieve, not its implementation mechanics. Avoid API/engineering terms "
+                "(e.g. 'parent/child parameters', 'JSON payload', 'request body', 'hierarchical "
+                "data format') — say what it means in practice instead "
+                "(e.g. 'connect to other systems without custom coding').",
     },
 }
 
