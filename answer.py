@@ -6,6 +6,7 @@ otherwise a local Ollama chat model (free). Answers are grounded strictly in the
 provided sources and refuse when the content isn't there.
 """
 import os
+import re
 import json
 import urllib.request
 
@@ -13,11 +14,70 @@ import config
 import personas
 import retrieve
 
+_STOP_Q = {"a", "an", "the", "is", "are", "do", "does", "did", "what", "which", "who",
+           "how", "why", "when", "where", "of", "in", "on", "for", "to", "and", "or",
+           "by", "with", "this", "that", "these", "those", "mean", "meaning", "you",
+           "your", "we", "our", "me", "it", "its", "be", "was", "were", "will", "would",
+           "can", "could", "should", "about", "tell", "give", "show", "explain", "describe"}
+
+
+def _sig_terms(text):
+    return {w for w in re.findall(r"\w+", (text or "").lower()) if len(w) > 2 and w not in _STOP_Q}
+
+
+def _sig_bigrams(text):
+    """Adjacent word-pairs where BOTH words are significant (not stopwords) — a
+    precise signal that the question's actual PHRASE (not just scattered common
+    words) is present, e.g. 'payment schedules' or 'financial record'."""
+    words = re.findall(r"\w+", (text or "").lower())
+    return {f"{a} {b}" for a, b in zip(words, words[1:])
+            if a not in _STOP_Q and b not in _STOP_Q and len(a) > 2 and len(b) > 2}
+
+
+_DEFN_RE = re.compile(
+    r"(?:mean(?:s|t)?\s+by|meant\s+by|what\s+(?:do|does|is)\s+.+?\s+mean\b|"
+    r"define\b|definition\s+of)\s*(.*)$", re.I)
+
+
+def _claim_span(question):
+    """If the question asks to define/explain a SPECIFIC phrase ('what do you mean
+    by X', 'define X', 'what does X mean'), return that phrase — the thing whose
+    presence must be verified in the sources before the LLM is allowed to answer.
+    Returns None for ordinary questions: most real questions are natural paraphrases
+    of the source wording, so requiring a literal phrase match on every question
+    would wrongly refuse legitimate, well-grounded answers (the dense-cosine gate
+    alone already handles those)."""
+    m = _DEFN_RE.search(question or "")
+    if not m:
+        return None
+    claim = m.group(1).strip(" ?.!")
+    return claim or question
+
+
+def _lexical_overlap(claim, hits):
+    """Phrase-level grounding check for a SPECIFIC claim: do adjacent significant
+    word-pairs from `claim` appear anywhere in the retrieved text — not just its
+    individual common words, which show up in unrelated content too. Only invoked
+    when `_claim_span` detects a define/explain-this-phrase question; guards
+    against high dense-cosine on a topically-similar but factually different chunk
+    (which otherwise lets the LLM fabricate an answer to a claim the sources never
+    actually make)."""
+    qbigrams = _sig_bigrams(claim)
+    blob = " ".join((h.get("text") or "") for h in hits).lower()
+    if qbigrams:
+        return sum(1 for bg in qbigrams if bg in blob) / len(qbigrams)
+    qterms = _sig_terms(claim)              # single-significant-word claims: fall back
+    return (sum(1 for w in qterms if w in blob) / len(qterms)) if qterms else 1.0
+
 _SYSTEM = (
     "You are the Tapestry Knowledge Assistant. Answer the user's question using ONLY the "
     "SOURCES provided. Hard rules:\n"
     "1) GROUND every statement in the sources. If the answer is not in them, say so plainly — "
     "never invent features, numbers, dates, or names.\n"
+    "1b) The user may ask about a SPECIFIC claim, phrase, or term. If the SOURCES do not contain "
+    "that specific claim, do NOT substitute a different-but-related feature and present it as if "
+    "it explains the claim. Say plainly you don't have that specific detail available, and only "
+    "then optionally mention what IS grounded, clearly framed as a separate, related point.\n"
     "2) AUDIENCE: {label}. STYLE: {style}\n"
     "3) {safety}\n"
     "4) STRUCTURE: open with a one-sentence direct answer, then 2-5 short bullets of specifics "
@@ -111,9 +171,15 @@ def answer(question, persona, k=6):
     """Retrieve (persona-filtered) + compose one grounded answer. Returns a dict."""
     allowed = personas.allowed_types(persona)
     hits = retrieve.hybrid(question, allowed=allowed, k=k)
-    # confidence gate: best dense cosine among hits. Low -> refuse (never call an LLM),
-    # so we don't answer (or pay Claude) on weakly-supported questions.
+    # confidence gate: best dense cosine among hits. For "what do you mean by X" /
+    # "define X" questions specifically, also require X's phrase to actually appear in
+    # the sources — damp confidence if not (topic-similar but not on-claim: the exact
+    # failure mode that let the LLM fabricate an answer to a phrase the sources never
+    # make). Ordinary questions skip this — natural paraphrase shouldn't be penalized.
     confidence = max((h.get("cosine") or 0.0) for h in hits) if hits else 0.0
+    claim = _claim_span(question)
+    if hits and claim and _lexical_overlap(claim, hits) == 0.0:
+        confidence *= 0.5
     if not hits or confidence < min_confidence():
         return {"answer": "I couldn't find sufficient support in the Product KB to answer that "
                           "confidently. Try rephrasing, or narrow it to a specific release/topic.",
