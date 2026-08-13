@@ -94,7 +94,10 @@ _SYSTEM = (
     "5.x belong to a different product and may appear in template pages — do NOT present them as "
     "Tapestry releases; ignore them.\n"
     "8) Write monetary/large numbers in plain text (e.g. 'USD 400B', '15 trillion') — never use "
-    "the '$' symbol."
+    "the '$' symbol.\n"
+    "9) NEVER state a percentage, dollar figure, or statistic (e.g. 'reduces cost by 50%') "
+    "unless that EXACT figure appears in the SOURCES. If you don't have a specific figure for a "
+    "benefit, describe it qualitatively instead of inventing one."
 )
 _SAFE_PUBLIC = ("CUSTOMER-SAFE: do not expose internal Jira IDs/keys, code, table/column/method "
                 "names, or internal person names; share only released, customer-appropriate information.")
@@ -141,6 +144,34 @@ def min_confidence():
         return float(os.getenv("TAPESTRY_MIN_CONFIDENCE", "0.35"))
     except ValueError:
         return 0.35
+
+
+_PCT_RE = re.compile(r"\b\d{1,3}(?:\.\d+)?\s?%")
+
+
+def _strip_ungrounded_numbers(text, hits):
+    """Deterministic post-generation safety net: drop any line/bullet whose percentage
+    figure doesn't literally appear in the retrieved sources. Numbers are the most
+    decision-critical and most reliably-verifiable class of hallucination — a real
+    citation would contain the same digits — and prompting alone isn't reliable enough
+    on a local model (observed: llama3.2 invented '50%/75%/30%' ROI stats complete with
+    fake '(Source: [n])' tags on an Executive ROI question with no such figures anywhere
+    in the KB). Returns (clean_text, whether_anything_was_stripped)."""
+    blob = " ".join((h.get("text") or "") for h in hits)
+    lines, dropped = (text or "").split("\n"), False
+    kept = []
+    for ln in lines:
+        pcts = _PCT_RE.findall(ln)
+        if pcts and not any(p.strip() in blob or p.replace(" ", "") in blob.replace(" ", "")
+                            for p in pcts):
+            dropped = True
+            continue
+        kept.append(ln)
+    out = "\n".join(kept).strip()
+    if dropped:
+        out += ("\n\n_Note: this answer omitted one or more specific statistics that "
+                "weren't found in the source content._")
+    return out, dropped
 
 
 def _prompt(question, hits):
@@ -202,8 +233,15 @@ def answer(question, persona, k=6):
     else:
         return {"answer": None, "sources": [], "provider": "none",
                 "confidence": round(confidence, 3), "fallback_used": False, "engine_help": detail}
-    return {"answer": text.strip(), "provider": f"{eng}:{detail}",
-            "confidence": round(confidence, 3),
+
+    text, stripped = _strip_ungrounded_numbers(text.strip(), hits)
+    if not text.strip():          # every line was an ungrounded stat — nothing grounded left
+        return {"answer": "I couldn't find sufficient support in the Product KB to answer that "
+                          "confidently. Try rephrasing, or narrow it to a specific release/topic.",
+                "sources": [], "provider": "refused",
+                "confidence": round(confidence, 3), "fallback_used": False}
+    return {"answer": text, "provider": f"{eng}:{detail}",
+            "confidence": round(confidence, 3), "numbers_stripped": stripped,
             "fallback_used": eng == "anthropic" and os.getenv("TAPESTRY_LLM_MODE", "local") == "fallback",
             "sources": [{"title": h.get("title"), "type": h.get("type"), "url": h.get("url"),
                          "image_path": h.get("image_path") or ""} for h in hits]}
