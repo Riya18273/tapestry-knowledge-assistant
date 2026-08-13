@@ -97,7 +97,11 @@ _SYSTEM = (
     "the '$' symbol.\n"
     "9) NEVER state a percentage, dollar figure, or statistic (e.g. 'reduces cost by 50%') "
     "unless that EXACT figure appears in the SOURCES. If you don't have a specific figure for a "
-    "benefit, describe it qualitatively instead of inventing one."
+    "benefit, describe it qualitatively instead of inventing one.\n"
+    "10) Some sources cite named companies' results achieved with COMPETITOR products (e.g. "
+    "Pega, MuleSoft, Fenergo) as market evidence, not as Tapestry customers. NEVER present a "
+    "competitor's customer outcome as if Tapestry produced it. If you mention such a company, "
+    "you MUST also name the actual vendor from the source — do not imply they use Tapestry."
 )
 _SAFE_PUBLIC = ("CUSTOMER-SAFE: do not expose internal Jira IDs/keys, code, table/column/method "
                 "names, or internal person names; share only released, customer-appropriate information.")
@@ -147,6 +151,44 @@ def min_confidence():
 
 
 _PCT_RE = re.compile(r"\b\d{1,3}(?:\.\d+)?\s?%")
+
+# Named institutions in the MRD's "comparable market evidence" table, and the actual
+# (competitor) vendor each result belongs to. The MRD explicitly flags these as
+# "competitive-landscape context only" — third-party outcomes, not Tapestry's own.
+_COMPETITOR_CASES = {
+    "ing": "pega", "wells fargo": "mulesoft", "virgin money": "pega",
+    "coast capital": "mulesoft", "first abu dhabi": "fenergo",
+}
+
+
+def _strip_misattributed_case_studies(text):
+    """Deterministic safety net for a subtler, more dangerous failure than invented
+    numbers: the source MRD has a table of REAL outcomes achieved by named companies
+    (ING, Virgin Money, Wells Fargo, Coast Capital, First Abu Dhabi Bank) using
+    COMPETITOR products (Pega/MuleSoft/Fenergo) — used only as market-sizing evidence.
+    The model can drop the vendor name and present these as if they were Tapestry's own
+    results (e.g. 'Adopting Tapestry... Onboarding cut to 15 minutes for Virgin Money'),
+    falsely implying a real company is a Tapestry customer. The numbers are real (so the
+    percentage-grounding check above doesn't catch it) — this is an ATTRIBUTION error,
+    not a fabrication. Strip any line that names one of these institutions without also
+    naming the vendor that actually produced the result."""
+    lines, dropped = (text or "").split("\n"), False
+    kept = []
+    for ln in lines:
+        lnl = ln.lower()
+        # word-boundary match — plain substring would false-positive on e.g. "ing" inside
+        # "processing"/"onboarding"/"reducing" (found and fixed during verification)
+        company = next((c for c in _COMPETITOR_CASES
+                        if re.search(rf"\b{re.escape(c)}\b", lnl)), None)
+        if company and not re.search(rf"\b{re.escape(_COMPETITOR_CASES[company])}\b", lnl):
+            dropped = True
+            continue
+        kept.append(ln)
+    out = "\n".join(kept).strip()
+    if dropped:
+        out += ("\n\n_Note: this answer omitted one or more case-study results that were "
+                "achieved using a different (competitor) product, not Tapestry._")
+    return out, dropped
 
 
 def _strip_ungrounded_numbers(text, hits):
@@ -234,7 +276,9 @@ def answer(question, persona, k=6):
         return {"answer": None, "sources": [], "provider": "none",
                 "confidence": round(confidence, 3), "fallback_used": False, "engine_help": detail}
 
-    text, stripped = _strip_ungrounded_numbers(text.strip(), hits)
+    text, num_stripped = _strip_ungrounded_numbers(text.strip(), hits)
+    text, attr_stripped = _strip_misattributed_case_studies(text)
+    stripped = num_stripped or attr_stripped
     if not text.strip():          # every line was an ungrounded stat — nothing grounded left
         return {"answer": "I couldn't find sufficient support in the Product KB to answer that "
                           "confidently. Try rephrasing, or narrow it to a specific release/topic.",
