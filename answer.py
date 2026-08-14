@@ -191,6 +191,43 @@ def _strip_misattributed_case_studies(text):
     return out, dropped
 
 
+# The company-name check above can be defeated by simply dropping the institution's name
+# while keeping its (real, verbatim) figure — observed live: "38 countries... ~91.5%",
+# "~15 days to ~15 minutes", "10K+ hours" all reappeared with zero company names attached,
+# still presented as Tapestry's own results. These 6 figures are a known, CLOSED set (one
+# table in the MRD), so block on the figures themselves as a second, independent net —
+# tolerant of "~", extra spaces, and reordering, since exact phrasing varies run to run.
+_COMPETITOR_STAT_FINGERPRINTS = [
+    (re.compile(r"91\.5\s?%"), "pega"),                              # ING/Pega KYC automation
+    (re.compile(r"\b38\s+countries\b", re.I), "pega"),                # ING/Pega footprint
+    (re.compile(r"~?\s?15\s+days\b.{0,25}~?\s?15\s+minutes\b", re.I), "pega"),   # Virgin Money/Pega
+    (re.compile(r"\b10\s?k\+?\s+hours\b", re.I), "mulesoft"),         # Coast Capital/MuleSoft
+    (re.compile(r"\+?\s?20\s?k\s+(?:new\s+)?accounts\b", re.I), "mulesoft"),     # Coast Capital/MuleSoft
+    (re.compile(r"49\s?%\s+api\s+reuse", re.I), "mulesoft"),          # Coast Capital/MuleSoft
+]
+
+
+def _strip_uncredited_case_stats(text):
+    """Second, independent net alongside _strip_misattributed_case_studies: strip a line
+    that contains one of the known competitor-table figures unless it also names the real
+    vendor — catches the case where the company name was dropped but the number wasn't."""
+    lines, dropped = (text or "").split("\n"), False
+    kept = []
+    for ln in lines:
+        lnl = ln.lower()
+        flagged = any(pat.search(ln) and not re.search(rf"\b{re.escape(vendor)}\b", lnl)
+                     for pat, vendor in _COMPETITOR_STAT_FINGERPRINTS)
+        if flagged:
+            dropped = True
+            continue
+        kept.append(ln)
+    out = "\n".join(kept).strip()
+    if dropped:
+        out += ("\n\n_Note: this answer omitted one or more statistics sourced from "
+                "third-party (competitor) case studies, not Tapestry's own results._")
+    return out, dropped
+
+
 def _strip_ungrounded_numbers(text, hits):
     """Deterministic post-generation safety net: drop any line/bullet whose percentage
     figure doesn't literally appear in the retrieved sources. Numbers are the most
@@ -278,7 +315,8 @@ def answer(question, persona, k=6):
 
     text, num_stripped = _strip_ungrounded_numbers(text.strip(), hits)
     text, attr_stripped = _strip_misattributed_case_studies(text)
-    stripped = num_stripped or attr_stripped
+    text, stat_stripped = _strip_uncredited_case_stats(text)
+    stripped = num_stripped or attr_stripped or stat_stripped
     if not text.strip():          # every line was an ungrounded stat — nothing grounded left
         return {"answer": "I couldn't find sufficient support in the Product KB to answer that "
                           "confidently. Try rephrasing, or narrow it to a specific release/topic.",
