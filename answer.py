@@ -108,12 +108,23 @@ _SAFE_PUBLIC = ("CUSTOMER-SAFE: do not expose internal Jira IDs/keys, code, tabl
 _SAFE_INTERNAL = "Internal audience: technical detail is fine."
 
 
-def _ollama_chat_model():
+def _premium_personas():
+    raw = os.getenv("TAPESTRY_PREMIUM_PERSONAS", "customer")
+    return {p.strip() for p in raw.split(",") if p.strip()}
+
+
+def _ollama_chat_model(persona=None):
     try:
         base = config.settings()["ollama_base"].split("/v1")[0].rstrip("/")
         req = urllib.request.Request(base + "/api/tags")
         with urllib.request.urlopen(req, timeout=15) as r:
             models = [m["name"] for m in json.loads(r.read().decode()).get("models", [])]
+        # higher-stakes personas (e.g. Customer, public-facing) get a slower but more
+        # reliable model if configured — everyone else stays on the fast default so most
+        # traffic isn't paying the speed cost for quality only a few personas need.
+        premium = os.getenv("TAPESTRY_PREMIUM_CHAT_MODEL")
+        if premium and persona in _premium_personas():
+            return premium
         pref = os.getenv("TAPESTRY_CHAT_MODEL")
         if pref:
             return pref
@@ -123,18 +134,20 @@ def _ollama_chat_model():
         return None
 
 
-def engine_status():
+def engine_status(persona=None):
     """(engine, detail) for the answer step, honoring TAPESTRY_LLM_MODE:
       local    -> local Ollama only (ZERO Claude credits) [default]
       claude   -> Claude (uses credits)
       fallback -> local primary; Claude only on low confidence (near-zero)
+    `persona` (if given) can route to a different, slower/better local model via
+    TAPESTRY_PREMIUM_CHAT_MODEL + TAPESTRY_PREMIUM_PERSONAS (default: customer).
     Falls back to whatever is actually available."""
     mode = os.getenv("TAPESTRY_LLM_MODE", "local").lower()
     key = os.getenv("ANTHROPIC_API_KEY")
     model = os.getenv("TAPESTRY_LLM_MODEL", "claude-sonnet-4-5")
     if mode == "claude" and key:
         return "anthropic", model
-    m = _ollama_chat_model()
+    m = _ollama_chat_model(persona)
     if m:
         return "ollama", m
     if key:                       # local requested but no local model present
@@ -304,7 +317,7 @@ def answer(question, persona, k=6):
     system = _SYSTEM.format(label=p.get("label", persona), style=p.get("style", ""), safety=safety)
     user = _prompt(question, hits)
 
-    eng, detail = engine_status()
+    eng, detail = engine_status(persona)
     if eng == "anthropic":
         text = _call_anthropic(system, user, detail)
     elif eng == "ollama":
