@@ -216,7 +216,8 @@ _CHAT_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8">
  .msg{padding:12px 14px;border-radius:12px;max-width:92%}
  .u{align-self:flex-end;background:var(--navy);color:#fff}
  .a{align-self:flex-start;background:var(--card);border:1px solid var(--line);width:100%}
- .a h4{margin:.4em 0 .2em;font-size:15px;color:var(--navy)} .a p{margin:.4em 0;line-height:1.5} .a ul{margin:.3em 0 .3em 1.1em}
+ .a h4{margin:.4em 0 .2em;font-size:15px;color:var(--navy)} .a p{margin:.4em 0;line-height:1.5}
+ .a ul{margin:.25em 0;padding-left:1.3em} .a li{margin:.2em 0} .a li>ul{margin:.2em 0}
  .a code{background:#eef;padding:1px 5px;border-radius:5px;font-size:.9em}
  .meta{margin-top:8px;font-size:12px;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap;align-items:center}
  .chip{background:var(--chip);color:#1e4fb0;border-radius:10px;padding:2px 9px;font-size:11px}
@@ -244,12 +245,39 @@ const log=document.getElementById('log'), qi=document.getElementById('q'),
       ps=document.getElementById('persona'), btn=document.getElementById('send');
 const esc=s=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const inl=s=>esc(s).replace(/\\*\\*(.+?)\\*\\*/g,'<strong>$1</strong>').replace(/`([^`]+)`/g,'<code>$1</code>');
-function render(t){let h='',inL=false;for(const raw of (t||'').split('\\n')){const l=raw.trim();
-  const m=l.match(/^[-•*]\\s+(.*)/); if(m){if(!inL){h+='<ul>';inL=true;}h+='<li>'+inl(m[1])+'</li>';continue;}
-  if(inL){h+='</ul>';inL=false;} if(!l)continue;
-  if(/^#{1,6}\\s/.test(l))h+='<h4>'+inl(l.replace(/^#{1,6}\\s/,''))+'</h4>';
-  else if(/^sources:/i.test(l))h+='<div class="src">'+inl(l)+'</div>';
-  else h+='<p>'+inl(l)+'</p>';} if(inL)h+='</ul>'; return h;}
+function render(t){
+  // supports one level of nested/indented sub-bullets (tab or 2+ spaces, marker -/bullet/star/+/1.)
+  // — many answers use a top-level bullet followed by a tab-indented "+" sub-bullet line,
+  // which the old flat-list renderer dropped into plain paragraph tags, losing structure.
+  let h='',topOpen=false,liOpen=false,subOpen=false;
+  const closeAll=()=>{if(subOpen){h+='</ul>';subOpen=false;}if(liOpen){h+='</li>';liOpen=false;}
+    if(topOpen){h+='</ul>';topOpen=false;}};
+  for(const raw of (t||'').split('\\n')){
+    const lead=(raw.match(/^[\\t ]*/)||[''])[0];
+    const indent=(lead.match(/\\t/g)||[]).length+Math.floor(lead.replace(/\\t/g,'').length/2);
+    const l=raw.trim();
+    if(!l){closeAll();continue;}
+    const m=l.match(/^(?:[-•*+]|\\d+[.)])\\s+(.*)/);
+    if(m){
+      if(indent>0&&liOpen){
+        if(!subOpen){h+='<ul>';subOpen=true;}
+        h+='<li>'+inl(m[1])+'</li>';
+      }else{
+        if(subOpen){h+='</ul>';subOpen=false;}
+        if(liOpen)h+='</li>';
+        if(!topOpen){h+='<ul>';topOpen=true;}
+        h+='<li>'+inl(m[1]);liOpen=true;
+      }
+      continue;
+    }
+    closeAll();
+    if(/^#{1,6}\\s/.test(l))h+='<h4>'+inl(l.replace(/^#{1,6}\\s/,''))+'</h4>';
+    else if(/^sources:/i.test(l))h+='<div class="src">'+inl(l)+'</div>';
+    else h+='<p>'+inl(l)+'</p>';
+  }
+  closeAll();
+  return h;
+}
 function add(cls,html){const d=document.createElement('div');d.className='msg '+cls;d.innerHTML=html;log.appendChild(d);d.scrollIntoView({behavior:'smooth',block:'end'});return d;}
 async function boot(){
   try{const h=await (await fetch('/api/v1/health')).json();
