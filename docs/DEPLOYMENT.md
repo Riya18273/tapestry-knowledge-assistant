@@ -78,10 +78,16 @@ TAPESTRY_CHAT_MODEL=llama3.2     # local model for answers (optional; auto-detec
 TAPESTRY_MIN_CONFIDENCE=0.35     # refuse below this dense-cosine confidence
 
 # per-persona model routing — route only higher-stakes personas (default: customer) to a
-# slower-but-more-reliable model; everyone else stays on TAPESTRY_CHAT_MODEL (fast).
-# Set only if you've pulled a second model (e.g. `ollama pull qwen2.5:7b`) and want the
-# speed/quality trade-off scoped to specific personas instead of applied to all traffic.
-# TAPESTRY_PREMIUM_CHAT_MODEL=qwen2.5:7b
+# more-reliable model; everyone else stays on TAPESTRY_CHAT_MODEL (fast).
+# Set only if you've pulled a second model (e.g. `ollama pull hermes3:8b`).
+#
+# Validated by live A/B testing (same adversarial prompts across all three, same
+# 7.5GB-RAM CPU-only box): llama3.2 (default, fast) repeatedly fabricated ROI stats and
+# misattributed competitor case studies as Tapestry's own; qwen2.5:7b fixed both but
+# still asserted unquantified benefits fairly confidently; hermes3:8b was the only one
+# to explicitly say "no specific figures for that" rather than fabricate or overstate —
+# at the SAME response time as qwen2.5:7b (no speed trade-off for the quality gain).
+# TAPESTRY_PREMIUM_CHAT_MODEL=hermes3:8b
 # TAPESTRY_PREMIUM_PERSONAS=customer
 
 # --- embeddings (always local) ---
