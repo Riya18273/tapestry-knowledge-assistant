@@ -20,11 +20,14 @@ services:
       - .env                    # secrets: TAPESTRY_TEAMS_SECRET, Confluence creds (for ingest)
     environment:
       OPENAI_BASE_URL: http://ollama:11434/v1   # reach Ollama over the compose network
-      TAPESTRY_EMBED_MODEL: nomic-embed-text
-      TAPESTRY_CHAT_MODEL: llama3.2
-      TAPESTRY_LLM_MODE: local  # zero Claude credits
+      TAPESTRY_EMBED_MODEL: nomic-embed-text    # pinned: must match the index's embedding model
+      TAPESTRY_LLM_MODE: local   # zero Claude credits — safety floor, not a tuning knob
       TAPESTRY_VISION_MODE: "off"
       TAPESTRY_DATA_DIR: /app/data
+      # TAPESTRY_CHAT_MODEL is intentionally NOT set here — it comes from .env (env_file
+      # above) so it's a free tuning knob. An `environment:` entry always overrides
+      # env_file, so hardcoding it here (as a previous version did) silently ignores
+      # whatever a user sets in .env — this broke a model switch during testing.
     volumes:
       - ./data:/app/data:z      # KB chunks + vector index persist here (:z for RHEL/SELinux)
     ports:
