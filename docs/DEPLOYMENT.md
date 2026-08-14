@@ -77,6 +77,13 @@ TAPESTRY_LLM_MODE=local          # local = $0 Claude (Ollama only)  [default]
 TAPESTRY_CHAT_MODEL=llama3.2     # local model for answers (optional; auto-detected)
 TAPESTRY_MIN_CONFIDENCE=0.35     # refuse below this dense-cosine confidence
 
+# per-persona model routing — route only higher-stakes personas (default: customer) to a
+# slower-but-more-reliable model; everyone else stays on TAPESTRY_CHAT_MODEL (fast).
+# Set only if you've pulled a second model (e.g. `ollama pull qwen2.5:7b`) and want the
+# speed/quality trade-off scoped to specific personas instead of applied to all traffic.
+# TAPESTRY_PREMIUM_CHAT_MODEL=qwen2.5:7b
+# TAPESTRY_PREMIUM_PERSONAS=customer
+
 # --- embeddings (always local) ---
 OPENAI_BASE_URL=http://localhost:11434/v1
 TAPESTRY_EMBED_MODEL=nomic-embed-text
