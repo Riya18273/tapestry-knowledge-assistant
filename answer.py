@@ -274,10 +274,23 @@ def _prompt(question, hits):
     return f"QUESTION: {question}\n\nSOURCES:\n" + "\n\n".join(lines)
 
 
+def max_output_tokens():
+    """Hard generation cap — deterministic, model-independent. The '~140 words' prompt
+    rule (6) is only a soft target the model may ignore (weaker models especially); this
+    is the technical backstop that actually bounds worst-case generation time. Ollama had
+    NO cap at all before this — Claude's was hardcoded to 700. 600 is generous enough not
+    to truncate the longer, legitimately detailed answers we've seen (e.g. the 4-zone
+    network architecture breakdown), while still bounding runaway rambling."""
+    try:
+        return int(os.getenv("TAPESTRY_MAX_ANSWER_TOKENS", "600"))
+    except ValueError:
+        return 600
+
+
 def _call_anthropic(system, user, model):
     import anthropic
     msg = anthropic.Anthropic().messages.create(
-        model=model, max_tokens=700, system=system,
+        model=model, max_tokens=max_output_tokens(), system=system,
         messages=[{"role": "user", "content": user}])
     return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
 
@@ -285,6 +298,7 @@ def _call_anthropic(system, user, model):
 def _call_ollama(system, user, model):
     base = config.settings()["ollama_base"].rstrip("/")
     body = json.dumps({"model": model, "temperature": 0.2, "stream": False,
+                       "max_tokens": max_output_tokens(),  # Ollama's OpenAI-compat -> num_predict
                        "messages": [{"role": "system", "content": system},
                                     {"role": "user", "content": user}]}).encode()
     req = urllib.request.Request(base + "/chat/completions", data=body, method="POST",
