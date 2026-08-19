@@ -398,18 +398,50 @@ this in Teams is a ~USD 10–15/yr domain (TLS free); a standalone/internal web 
 ---
 
 ## 9. Security & ops (MVP)
-- **Auth**: put the API behind the enterprise identity/gateway; derive `persona` from the
-  authenticated user (don't trust a client-supplied persona in production).
+- **Auth**: see §9a below — a built-in username/password → persona mapping, no SSO required.
+  Off by default (nothing changes until you turn it on); once enabled, the server derives
+  `persona` from who authenticated, not a client-supplied field.
 - **Logging**: log question, persona, confidence, provider, and (if Claude) token counts +
   fallback reason — enables a monthly budget + alert.
 - **Persistence**: keep `data/` (chunks, images, Chroma index) on durable storage.
 - **Rebuilds** are zero-downtime (index builds into an inactive collection, then flips).
+
+## 9a. Auth without SSO — username/password → persona (off by default)
+
+No Azure AD / enterprise identity needed. A small local `users.json` (gitignored, PBKDF2-hashed
+passwords) maps each username to their allowed persona(s). **Disabled until you create a user** —
+a fresh deployment never locks itself out.
+
+**Enable it:**
+```bash
+cp users.json.example users.json      # then remove the placeholder entries
+python auth.py add alice customer                 # prompts for a password
+python auth.py add bob engineer,qa                 # a user can have multiple personas
+python auth.py list                                 # sanity check
+```
+Set in `.env`:
+```
+TAPESTRY_AUTH_REQUIRED=true
+```
+Recreate the container so it picks up the new file/env (**`up -d`, not `restart`** — restart
+doesn't reload `.env` or newly-mounted files):
+```bash
+docker compose up -d
+```
+
+**What changes:** the web chat now shows a sign-in form first; the persona dropdown is
+restricted to only that user's assigned persona(s). The API enforces this server-side —
+`POST /api/v1/chat` returns **403** if a logged-in user's request names a persona they weren't
+assigned, even if they edit the request directly (not just a client-side UI restriction).
+
+**Manage users:** `python auth.py add|list|remove ...`. No password-reset flow in this MVP —
+remove and re-add a user to change their password.
 
 ---
 
 ## 10. Phase plan (from the HLD)
 1. **FastAPI RAG service** (this) — `/chat` `/ingest` `/health`, local zero-credit + gate. ✅
 2. First channel — **Teams bot** (Azure Bot *or* Outgoing Webhook) or **Product UI panel**.
-3. Auth → persona mapping from identity.
+3. Auth → persona mapping from identity. ✅ (§9a — username/password, no SSO required)
 4. Optional Claude **fallback** with token logging + monthly budget (near-zero).
 5. Second channel reuses the same API.

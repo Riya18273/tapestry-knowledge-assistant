@@ -15,3 +15,6 @@ reports/
 
 # local tool binaries (e.g. cloudflared.exe)
 *.exe
+
+# real user credentials (see users.json.example)
+users.json

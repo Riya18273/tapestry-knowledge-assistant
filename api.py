@@ -22,6 +22,7 @@ import json
 import hmac
 import base64
 import hashlib
+import secrets
 import threading
 from typing import Optional, List
 
@@ -30,12 +31,24 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from pydantic import BaseModel
 
 import answer
+import auth
 import ingest
 import vectorstore
 import personas
 import config
 
 app = FastAPI(title="Tapestry Ask MobiFin API", version="1.0")
+
+# In-memory sessions: token -> {"username":..., "personas":[...]}. No SSO required —
+# the SERVER decides a user's persona from who they authenticated as; a client can no
+# longer just claim to be "engineer" once TAPESTRY_AUTH_REQUIRED is on. Ephemeral by
+# design ($0, no DB): lost on restart, fine at this scale (see docs/DEPLOYMENT.md).
+_SESSIONS = {}
+
+
+def _session_from(request):
+    tok = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+    return _SESSIONS.get(tok)
 
 _IMG_DIR = os.path.join(config.settings()["data_dir"], "images")
 _VISUAL = ("show", "diagram", "image", "picture", "visual", "screenshot", "flowchart",
@@ -85,6 +98,11 @@ class IngestIn(BaseModel):
     incremental: bool = True      # confluence: re-embed only new/changed pages
 
 
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+
 # --------------------------------------------------------------- endpoints --
 @app.get("/api/v1/health")
 def health():
@@ -98,11 +116,43 @@ def personas_list():
     return [{"id": k, "label": v} for k, v in personas.labels().items()]
 
 
+@app.get("/api/v1/auth-status")
+def auth_status():
+    return {"required": auth.enabled()}
+
+
+@app.post("/api/v1/login")
+def login(inp: LoginIn):
+    result = auth.authenticate(inp.username, inp.password)
+    if not result:
+        return JSONResponse({"detail": "Invalid username or password"}, status_code=401)
+    token = secrets.token_urlsafe(32)
+    _SESSIONS[token] = result
+    return {"token": token, "username": result["username"], "personas": result["personas"]}
+
+
+@app.get("/api/v1/me")
+def me(request: Request):
+    sess = _session_from(request)
+    if not sess:
+        return JSONResponse({"detail": "Not authenticated"}, status_code=401)
+    return {"username": sess["username"], "personas": sess["personas"]}
+
+
 @app.post("/api/v1/chat", response_model=ChatOut)
-def chat(inp: ChatIn):
+def chat(inp: ChatIn, request: Request):
+    persona = inp.persona
+    if auth.enabled():
+        sess = _session_from(request)
+        if not sess:
+            return JSONResponse({"detail": "Authentication required"}, status_code=401)
+        if persona not in sess["personas"]:      # server decides — client can't claim a persona
+            return JSONResponse(
+                {"detail": f"Persona '{persona}' not permitted for this account"},
+                status_code=403)
     ctx = " ".join(x for x in (inp.release, inp.issue_id) if x)
     q = f"{inp.question} (context: {ctx})" if ctx else inp.question
-    r = answer.answer(q, inp.persona)
+    r = answer.answer(q, persona)
     visual = any(w in inp.question.lower() for w in _VISUAL)   # show images only if asked
     srcs = []
     for s in r.get("sources", []):
@@ -232,12 +282,23 @@ _CHAT_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 </style></head><body>
 <header><b>Ask Tapestry</b><span id="eng">·</span></header>
 <div class="wrap">
-  <div class="hint">Grounded answers from the Tapestry knowledge base. Pick who's asking, then ask a question.</div>
-  <div id="log"></div>
-  <div class="row">
-    <select id="persona"></select>
-    <input id="q" placeholder="e.g. What is new in the latest release?" autocomplete="off">
-    <button id="send">Ask</button>
+  <div id="loginBox" style="display:none">
+    <div class="hint">Sign in to use Ask Tapestry.</div>
+    <div class="row">
+      <input id="luser" placeholder="username" autocomplete="username">
+      <input id="lpass" type="password" placeholder="password" autocomplete="current-password">
+      <button id="loginBtn">Sign in</button>
+    </div>
+    <div id="loginErr" style="color:#c0392b;font-size:13px;margin-top:6px"></div>
+  </div>
+  <div id="chatBox">
+    <div class="hint">Grounded answers from the Tapestry knowledge base. Pick who's asking, then ask a question.</div>
+    <div id="log"></div>
+    <div class="row">
+      <select id="persona"></select>
+      <input id="q" placeholder="e.g. What is new in the latest release?" autocomplete="off">
+      <button id="send">Ask</button>
+    </div>
   </div>
 </div>
 <script>
@@ -279,19 +340,59 @@ function render(t){
   return h;
 }
 function add(cls,html){const d=document.createElement('div');d.className='msg '+cls;d.innerHTML=html;log.appendChild(d);d.scrollIntoView({behavior:'smooth',block:'end'});return d;}
+
+// --- auth (optional — only enforced if the server has TAPESTRY_AUTH_REQUIRED on).
+// No SSO: the server maps username -> allowed persona(s); the client can no longer
+// just claim to be "engineer" once this is on. Token lives in sessionStorage only
+// (cleared when the tab closes), not localStorage.
+let TOKEN=sessionStorage.getItem('tap_token')||null, MY_PERSONAS=null, ALL_PERSONAS=[];
+const loginBox=document.getElementById('loginBox'), chatBox=document.getElementById('chatBox'),
+      luser=document.getElementById('luser'), lpass=document.getElementById('lpass'),
+      loginBtn=document.getElementById('loginBtn'), loginErr=document.getElementById('loginErr');
+
+function showChat(){
+  loginBox.style.display='none'; chatBox.style.display='';
+  const opts=ALL_PERSONAS.filter(p=>!MY_PERSONAS||MY_PERSONAS.includes(p.id));
+  ps.innerHTML=opts.map(p=>`<option value="${p.id}">${p.label}</option>`).join('');
+  const eng=opts.findIndex(p=>p.id==='engineer'); if(eng>=0)ps.selectedIndex=eng;
+  qi.focus();
+}
+async function doLogin(){
+  loginErr.textContent=''; loginBtn.disabled=true;
+  try{
+    const r=await fetch('/api/v1/login',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({username:luser.value.trim(),password:lpass.value})});
+    if(!r.ok){loginErr.textContent='Invalid username or password.';loginBtn.disabled=false;return;}
+    const d=await r.json();
+    TOKEN=d.token; MY_PERSONAS=d.personas; sessionStorage.setItem('tap_token',TOKEN);
+    showChat();
+  }catch(e){loginErr.textContent='Login failed: '+e;}
+  loginBtn.disabled=false;
+}
 async function boot(){
   try{const h=await (await fetch('/api/v1/health')).json();
     document.getElementById('eng').textContent='· engine: '+h.engine+' · '+h.vectors+' passages';}catch(e){}
-  const ps_=await (await fetch('/api/v1/personas')).json();
-  ps.innerHTML=ps_.map(p=>`<option value="${p.id}">${p.label}</option>`).join('');
-  const eng=ps_.findIndex(p=>p.id==='engineer'); if(eng>=0)ps.selectedIndex=eng;
+  ALL_PERSONAS=await (await fetch('/api/v1/personas')).json();
+  const st=await (await fetch('/api/v1/auth-status')).json();
+  if(!st.required){showChat();return;}
+  if(TOKEN){
+    const me=await fetch('/api/v1/me',{headers:{'Authorization':'Bearer '+TOKEN}});
+    if(me.ok){MY_PERSONAS=(await me.json()).personas;showChat();return;}
+    TOKEN=null; sessionStorage.removeItem('tap_token');
+  }
+  loginBox.style.display=''; chatBox.style.display='none'; luser.focus();
 }
 async function ask(){
   const q=qi.value.trim(); if(!q)return; qi.value='';
   add('u',esc(q)); const a=add('a','<em>Thinking…</em>'); btn.disabled=true;
   try{
-    const r=await (await fetch('/api/v1/chat',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({question:q,persona:ps.value})})).json();
+    const headers={'Content-Type':'application/json'};
+    if(TOKEN)headers['Authorization']='Bearer '+TOKEN;
+    const resp=await fetch('/api/v1/chat',{method:'POST',headers,
+      body:JSON.stringify({question:q,persona:ps.value})});
+    if(resp.status===401){a.innerHTML='<span style="color:#c0392b">Session expired — refresh and sign in again.</span>';btn.disabled=false;return;}
+    if(resp.status===403){a.innerHTML='<span style="color:#c0392b">That persona isn\\'t permitted for your account.</span>';btn.disabled=false;return;}
+    const r=await resp.json();
     let html=render(r.answer||'(no answer)');
     (r.sources||[]).forEach(s=>{ if(s.image_url) html+=`<img src="${s.image_url}" alt="${esc(s.title||'')}">`; });
     html+=`<div class="meta"><span class="chip">confidence ${(r.confidence||0).toFixed(2)}</span>`+
@@ -302,5 +403,7 @@ async function ask(){
   }catch(e){a.innerHTML='<span style="color:#c0392b">Error: '+esc(String(e))+'</span>';}
   btn.disabled=false; qi.focus();
 }
-btn.onclick=ask; qi.addEventListener('keydown',e=>{if(e.key==='Enter')ask();}); boot();
+btn.onclick=ask; qi.addEventListener('keydown',e=>{if(e.key==='Enter')ask();});
+loginBtn.onclick=doLogin; lpass.addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
+boot();
 </script></body></html>"""

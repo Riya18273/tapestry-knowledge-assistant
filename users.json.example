@@ -1,0 +1,11 @@
+{
+  "_comment": "Copy to users.json (gitignored) and manage via: python auth.py add <username> <persona1,persona2>",
+  "demo_customer": {
+    "password_hash": "pbkdf2$200000$<generated>$<generated>",
+    "personas": ["customer"]
+  },
+  "demo_engineer": {
+    "password_hash": "pbkdf2$200000$<generated>$<generated>",
+    "personas": ["engineer", "qa"]
+  }
+}
