@@ -243,7 +243,24 @@ async def teams(request: Request):
     question = _clean_teams_text(data.get("text", ""))
     if not question:
         return JSONResponse({"type": "message", "text": "Ask me a question about Tapestry."})
-    persona, question = _persona_from(question, os.getenv("TAPESTRY_TEAMS_PERSONA", "engineer"))
+
+    # Teams already authenticated the sender — reuse the SAME users.json (no separate
+    # password) to look up what they're permitted to see, instead of trusting whatever
+    # persona they type. Unrecognized senders fall back to the old prefix/default
+    # behavior, so this doesn't break anything for people not yet added.
+    sender = ((data.get("from") or {}).get("name") or "").strip()
+    allowed = auth.personas_for_identity(sender)
+    requested, question = _persona_from(question, os.getenv("TAPESTRY_TEAMS_PERSONA", "engineer"))
+
+    if allowed:
+        persona = requested if requested in allowed else allowed[0]
+        if requested and requested not in allowed:
+            return JSONResponse({"type": "message",
+                                 "text": f"That persona isn't permitted for your account. "
+                                         f"You can use: {', '.join(allowed)}."})
+    else:
+        persona = requested          # unrecognized sender: today's behavior, unchanged
+
     r = answer.answer(question, persona)
     reply = r.get("answer") or "I couldn't find an answer in the Product KB."
     srcs = [s["title"] for s in r.get("sources", []) if s.get("title")][:4]

@@ -73,6 +73,22 @@ def authenticate(username, password):
     return {"username": username, "personas": allowed}
 
 
+def personas_for_identity(identity):
+    """No-password lookup against the same users.json, for channels (e.g. Teams) that
+    already authenticated the person themselves — we just need their permitted
+    persona(s), not a second password. Case-insensitive/trimmed match on the username
+    (set the username to the person's Teams display name when adding them for this).
+    Returns the persona list, or None if the identity isn't a known user."""
+    if not identity:
+        return None
+    target = identity.strip().lower()
+    for username, rec in _load().items():
+        if username.strip().lower() == target:
+            allowed = [p for p in rec.get("personas", []) if p in _personas.PERSONAS]
+            return allowed or None
+    return None
+
+
 def enabled():
     """Auth is only enforced if explicitly turned on AND at least one user exists —
     so a fresh/default deployment never silently locks itself out."""
